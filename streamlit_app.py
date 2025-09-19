@@ -1,21 +1,17 @@
 import streamlit as st
 import folium
-import googlemaps
+import requests
 from streamlit_folium import st_folium
 
-# Google Maps APIキーを設定
-# ここに自分のAPIキーを入力してください
-gmaps = googlemaps.Client(key="YOUR_GOOGLE_MAPS_API_KEY")
-
+# アプリケーションのタイトル
 st.title("日田市ハザードマップウェブアプリケーション")
 st.markdown("---")
 
-## アプリケーションの概要
+## 概要
 st.header("概要")
 st.write(
     "このアプリケーションは、大分県日田市における浸水想定区域を表示するハザードマップです。指定した場所を検索し、地図上に浸水リスクを表示できます。"
 )
-
 st.markdown("---")
 
 ## 地図と機能
@@ -33,11 +29,15 @@ m = folium.Map(location=hida_city_center, zoom_start=13, control_scale=True)
 # 検索結果の処理
 if user_address:
     try:
-        geocode_result = gmaps.geocode(user_address + ", 大分県日田市")
+        # Nominatim（オープンソースのジオコーディングサービス）を使用
+        url = f"https://nominatim.openstreetmap.org/search?format=json&q={user_address}, 大分県日田市"
+        response = requests.get(url)
+        geocode_result = response.json()
+
         if geocode_result:
-            location = geocode_result[0]['geometry']['location']
-            lat = location['lat']
-            lng = location['lng']
+            location = geocode_result[0]
+            lat = float(location['lat'])
+            lng = float(location['lon'])
             folium.Marker(
                 [lat, lng],
                 popup=user_address,
@@ -52,8 +52,6 @@ if user_address:
 
 # ハザードマップのレイヤーを追加（例：架空の浸水想定区域）
 # ここではダミーのPolygonを使用していますが、実際にはGeoJSONデータなどを読み込む必要があります。
-# 日田市の浸水想定区域のデータは、日田市公式サイトや国土交通省のハザードマップポータルサイトなどで公開されています。
-# 例: 日田市における筑後川水系の浸水想定区域データ
 folium.GeoJson(
     "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson",
     name="浸水想定区域（ダミー）",
