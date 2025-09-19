@@ -2,16 +2,10 @@ import streamlit as st
 import folium
 import requests
 from streamlit_folium import st_folium
+import urllib.parse # 新たに追加
 
 # アプリケーションのタイトル
 st.title("日田市ハザードマップウェブアプリケーション")
-st.markdown("---")
-
-## 概要
-st.header("概要")
-st.write(
-    "このアプリケーションは、大分県日田市における浸水想定区域を表示するハザードマップです。指定した場所を検索し、地図上に浸水リスクを表示できます。"
-)
 st.markdown("---")
 
 ## 地図と機能
@@ -29,9 +23,17 @@ m = folium.Map(location=hida_city_center, zoom_start=13, control_scale=True)
 # 検索結果の処理
 if user_address:
     try:
-        # Nominatim（オープンソースのジオコーディングサービス）を使用
-        url = f"https://nominatim.openstreetmap.org/search?format=json&q={user_address}, 大分県日田市"
-        response = requests.get(url)
+        # クエリ文字列をURLエンコード
+        encoded_address = urllib.parse.quote(user_address + ", 大分県日田市")
+        url = f"https://nominatim.openstreetmap.org/search?format=json&q={encoded_address}"
+        
+        # リクエストヘッダーにユーザーエージェントを追加
+        headers = {'User-Agent': 'HitaCityHazardMapApp/1.0 (streamlit_app; developer@example.com)'}
+        response = requests.get(url, headers=headers)
+        
+        # HTTPステータスコードを確認
+        response.raise_for_status()
+        
         geocode_result = response.json()
 
         if geocode_result:
@@ -47,11 +49,16 @@ if user_address:
             m.zoom_start = 15
         else:
             st.error("住所が見つかりませんでした。別の住所を試してください。")
+    except requests.exceptions.HTTPError as errh:
+        st.error(f"HTTPエラーが発生しました: {errh}")
+    except requests.exceptions.RequestException as erre:
+        st.error(f"リクエストエラーが発生しました: {erre}")
+    except ValueError as ve:
+        st.error("レスポンスがJSON形式ではありませんでした。しばらく待ってから再度お試しください。")
     except Exception as e:
-        st.error(f"エラーが発生しました: {e}")
+        st.error(f"予期せぬエラーが発生しました: {e}")
 
-# ハザードマップのレイヤーを追加（例：架空の浸水想定区域）
-# ここではダミーのPolygonを使用していますが、実際にはGeoJSONデータなどを読み込む必要があります。
+# ハザードマップのレイヤーを追加（ダミーデータ）
 folium.GeoJson(
     "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson",
     name="浸水想定区域（ダミー）",
