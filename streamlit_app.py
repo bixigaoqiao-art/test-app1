@@ -121,80 +121,111 @@ else:
 
 if gdf is not None:
     try:
+        # データの情報を表示
+        st.write("### データ情報")
+        st.write(f"レコード数: {len(gdf)}")
+        st.write(f"カラム名: {list(gdf.columns)}")
+        
+        # 最初の数行を表示
+        with st.expander("データプレビュー"):
+            st.dataframe(gdf.head())
+        
         # CRSを確認・変換
-        if gdf.crs != "EPSG:4326":
+        if gdf.crs is None:
+            st.warning("CRSが設定されていません。EPSG:4326を設定します。")
+            gdf = gdf.set_crs("EPSG:4326")
+        elif gdf.crs != "EPSG:4326":
             gdf = gdf.to_crs("EPSG:4326")
         
-        # 表示する浸水深の選択
-        if 'depth_code' in gdf.columns:
+        # 浸水深のカラムを探す（複数の可能性に対応）
+        depth_column = None
+        possible_depth_columns = ['depth_code', 'A31_001', '浸水深', 'A31_002', 'SHINSUISHIN']
+        for col in possible_depth_columns:
+            if col in gdf.columns:
+                depth_column = col
+                break
+        
+        # 浸水深カラムがあれば処理
+        if depth_column:
+            st.write(f"浸水深カラム: {depth_column}")
+            gdf['depth_code'] = gdf[depth_column]
+            
+            # 表示する浸水深の選択
             unique_depths = sorted(gdf['depth_code'].unique())
+            st.write(f"浸水深の種類: {unique_depths}")
+            
             selected_depths = st.sidebar.multiselect(
                 "表示する浸水深",
                 options=unique_depths,
                 default=unique_depths,
-                format_func=get_depth_label
+                format_func=lambda x: get_depth_label(int(x)) if isinstance(x, (int, float)) else str(x)
             )
             gdf_filtered = gdf[gdf['depth_code'].isin(selected_depths)]
         else:
+            st.warning("浸水深のカラムが見つかりません。全てのデータを表示します。")
             gdf_filtered = gdf
+            gdf_filtered['depth_code'] = 3  # デフォルト値
         
         # 地図の作成
         st.subheader("📍 洪水浸水想定区域マップ")
+        st.write(f"表示するポリゴン数: {len(gdf_filtered)}")
         
-        # 地図の中心座標を計算
-        bounds = gdf_filtered.total_bounds
-        center_lat = (bounds[1] + bounds[3]) / 2
-        center_lon = (bounds[0] + bounds[2]) / 2
-        
-        # Folium地図の作成
-        m = folium.Map(
-            location=[center_lat, center_lon],
-            zoom_start=13,
-            tiles='OpenStreetMap'
-        )
-        
-        # レイヤーコントロール用
-        feature_group = folium.FeatureGroup(name="浸水想定区域")
-        
-        # ポリゴンを地図に追加
-        for idx, row in gdf_filtered.iterrows():
-            depth_code = row.get('depth_code', 0)
-            depth_label = row.get('depth_label', get_depth_label(depth_code))
+        if len(gdf_filtered) == 0:
+            st.error("表示するデータがありません。")
+        else:
+            # 地図の中心座標を計算
+            bounds = gdf_filtered.total_bounds
+            center_lat = (bounds[1] + bounds[3]) / 2
+            center_lon = (bounds[0] + bounds[2]) / 2
             
-            folium.GeoJson(
-                row['geometry'],
-                style_function=lambda x, dc=depth_code: {
-                    'fillColor': get_depth_color(dc),
-                    'color': 'black',
-                    'weight': 1,
-                    'fillOpacity': 0.6
-                },
-                tooltip=f"浸水深: {depth_label}"
-            ).add_to(feature_group)
-        
-        feature_group.add_to(m)
-        
-        # レイヤーコントロールを追加
-        folium.LayerControl().add_to(m)
-        
-        # 凡例を追加
-        legend_html = '''
-        <div style="position: fixed; 
-                    bottom: 50px; right: 50px; width: 180px; height: auto; 
-                    background-color: white; border:2px solid grey; z-index:9999; 
-                    font-size:14px; padding: 10px">
-        <p style="margin:0; font-weight:bold;">浸水深凡例</p>
-        '''
-        for code in range(1, 8):
-            color = get_depth_color(code)
-            label = get_depth_label(code)
-            legend_html += f'<p style="margin:3px 0;"><span style="background-color:{color}; width:20px; height:15px; display:inline-block; margin-right:5px;"></span>{label}</p>'
-        
-        legend_html += '</div>'
-        m.get_root().html.add_child(folium.Element(legend_html))
-        
-        # 地図を表示
-        folium_static(m, width=1200, height=600)
+            st.write(f"地図の中心: 緯度 {center_lat:.4f}, 経度 {center_lon:.4f}")
+            
+            # Folium地図の作成
+            m = folium.Map(
+                location=[center_lat, center_lon],
+                zoom_start=12,
+                tiles='OpenStreetMap'
+            )
+            
+            # 全データを一度にGeoJsonとして追加（パフォーマンス改善）
+            for idx, row in gdf_filtered.iterrows():
+                depth_code = row.get('depth_code', 3)
+                try:
+                    depth_code = int(depth_code)
+                except:
+                    depth_code = 3
+                
+                depth_label = get_depth_label(depth_code)
+                
+                folium.GeoJson(
+                    row['geometry'].__geo_interface__,
+                    style_function=lambda x, dc=depth_code: {
+                        'fillColor': get_depth_color(dc),
+                        'color': 'black',
+                        'weight': 0.5,
+                        'fillOpacity': 0.6
+                    },
+                    tooltip=f"浸水深: {depth_label}"
+                ).add_to(m)
+            
+            # 凡例を追加
+            legend_html = '''
+            <div style="position: fixed; 
+                        bottom: 50px; right: 50px; width: 180px; height: auto; 
+                        background-color: white; border:2px solid grey; z-index:9999; 
+                        font-size:14px; padding: 10px">
+            <p style="margin:0; font-weight:bold;">浸水深凡例</p>
+            '''
+            for code in range(1, 8):
+                color = get_depth_color(code)
+                label = get_depth_label(code)
+                legend_html += f'<p style="margin:3px 0;"><span style="background-color:{color}; width:20px; height:15px; display:inline-block; margin-right:5px;"></span>{label}</p>'
+            
+            legend_html += '</div>'
+            m.get_root().html.add_child(folium.Element(legend_html))
+            
+            # 地図を表示
+            folium_static(m, width=1200, height=600)
         
         # 統計情報
         st.subheader("📊 統計情報")
