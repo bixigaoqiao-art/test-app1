@@ -121,102 +121,101 @@ else:
 
 if gdf is not None:
     try:
-    
-    # CRSを確認・変換
-    if gdf.crs != "EPSG:4326":
-        gdf = gdf.to_crs("EPSG:4326")
-    
-    # 表示する浸水深の選択
-    if 'depth_code' in gdf.columns:
-        unique_depths = sorted(gdf['depth_code'].unique())
-        selected_depths = st.sidebar.multiselect(
-            "表示する浸水深",
-            options=unique_depths,
-            default=unique_depths,
-            format_func=get_depth_label
-        )
-        gdf_filtered = gdf[gdf['depth_code'].isin(selected_depths)]
-    else:
-        gdf_filtered = gdf
-    
-    # 地図の作成
-    st.subheader("📍 洪水浸水想定区域マップ")
-    
-    # 地図の中心座標を計算
-    bounds = gdf_filtered.total_bounds
-    center_lat = (bounds[1] + bounds[3]) / 2
-    center_lon = (bounds[0] + bounds[2]) / 2
-    
-    # Folium地図の作成
-    m = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=13,
-        tiles='OpenStreetMap'
-    )
-    
-    # レイヤーコントロール用
-    feature_group = folium.FeatureGroup(name="浸水想定区域")
-    
-    # ポリゴンを地図に追加
-    for idx, row in gdf_filtered.iterrows():
-        depth_code = row.get('depth_code', 0)
-        depth_label = row.get('depth_label', get_depth_label(depth_code))
+        # CRSを確認・変換
+        if gdf.crs != "EPSG:4326":
+            gdf = gdf.to_crs("EPSG:4326")
         
-        folium.GeoJson(
-            row['geometry'],
-            style_function=lambda x, dc=depth_code: {
-                'fillColor': get_depth_color(dc),
-                'color': 'black',
-                'weight': 1,
-                'fillOpacity': 0.6
-            },
-            tooltip=f"浸水深: {depth_label}"
-        ).add_to(feature_group)
-    
-    feature_group.add_to(m)
-    
-    # レイヤーコントロールを追加
-    folium.LayerControl().add_to(m)
-    
-    # 凡例を追加
-    legend_html = '''
-    <div style="position: fixed; 
-                bottom: 50px; right: 50px; width: 180px; height: auto; 
-                background-color: white; border:2px solid grey; z-index:9999; 
-                font-size:14px; padding: 10px">
-    <p style="margin:0; font-weight:bold;">浸水深凡例</p>
-    '''
-    for code in range(1, 8):
-        color = get_depth_color(code)
-        label = get_depth_label(code)
-        legend_html += f'<p style="margin:3px 0;"><span style="background-color:{color}; width:20px; height:15px; display:inline-block; margin-right:5px;"></span>{label}</p>'
-    
-    legend_html += '</div>'
-    m.get_root().html.add_child(folium.Element(legend_html))
-    
-    # 地図を表示
-    folium_static(m, width=1200, height=600)
-    
-    # 統計情報
-    st.subheader("📊 統計情報")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("総区域数", len(gdf_filtered))
-    
-    with col2:
-        if 'depth_code' in gdf_filtered.columns:
-            max_depth = gdf_filtered['depth_code'].max()
-            st.metric("最大浸水深", get_depth_label(max_depth))
-    
-    with col3:
-        total_area = gdf_filtered.geometry.area.sum() * 111320 * 111320  # 概算面積(m²)
-        st.metric("総面積(概算)", f"{total_area/1000000:.2f} km²")
-    
-    # データテーブル
-    if st.checkbox("データテーブルを表示"):
-        st.dataframe(gdf_filtered.drop(columns=['geometry']))
-    
+        # 表示する浸水深の選択
+        if 'depth_code' in gdf.columns:
+            unique_depths = sorted(gdf['depth_code'].unique())
+            selected_depths = st.sidebar.multiselect(
+                "表示する浸水深",
+                options=unique_depths,
+                default=unique_depths,
+                format_func=get_depth_label
+            )
+            gdf_filtered = gdf[gdf['depth_code'].isin(selected_depths)]
+        else:
+            gdf_filtered = gdf
+        
+        # 地図の作成
+        st.subheader("📍 洪水浸水想定区域マップ")
+        
+        # 地図の中心座標を計算
+        bounds = gdf_filtered.total_bounds
+        center_lat = (bounds[1] + bounds[3]) / 2
+        center_lon = (bounds[0] + bounds[2]) / 2
+        
+        # Folium地図の作成
+        m = folium.Map(
+            location=[center_lat, center_lon],
+            zoom_start=13,
+            tiles='OpenStreetMap'
+        )
+        
+        # レイヤーコントロール用
+        feature_group = folium.FeatureGroup(name="浸水想定区域")
+        
+        # ポリゴンを地図に追加
+        for idx, row in gdf_filtered.iterrows():
+            depth_code = row.get('depth_code', 0)
+            depth_label = row.get('depth_label', get_depth_label(depth_code))
+            
+            folium.GeoJson(
+                row['geometry'],
+                style_function=lambda x, dc=depth_code: {
+                    'fillColor': get_depth_color(dc),
+                    'color': 'black',
+                    'weight': 1,
+                    'fillOpacity': 0.6
+                },
+                tooltip=f"浸水深: {depth_label}"
+            ).add_to(feature_group)
+        
+        feature_group.add_to(m)
+        
+        # レイヤーコントロールを追加
+        folium.LayerControl().add_to(m)
+        
+        # 凡例を追加
+        legend_html = '''
+        <div style="position: fixed; 
+                    bottom: 50px; right: 50px; width: 180px; height: auto; 
+                    background-color: white; border:2px solid grey; z-index:9999; 
+                    font-size:14px; padding: 10px">
+        <p style="margin:0; font-weight:bold;">浸水深凡例</p>
+        '''
+        for code in range(1, 8):
+            color = get_depth_color(code)
+            label = get_depth_label(code)
+            legend_html += f'<p style="margin:3px 0;"><span style="background-color:{color}; width:20px; height:15px; display:inline-block; margin-right:5px;"></span>{label}</p>'
+        
+        legend_html += '</div>'
+        m.get_root().html.add_child(folium.Element(legend_html))
+        
+        # 地図を表示
+        folium_static(m, width=1200, height=600)
+        
+        # 統計情報
+        st.subheader("📊 統計情報")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("総区域数", len(gdf_filtered))
+        
+        with col2:
+            if 'depth_code' in gdf_filtered.columns:
+                max_depth = gdf_filtered['depth_code'].max()
+                st.metric("最大浸水深", get_depth_label(max_depth))
+        
+        with col3:
+            total_area = gdf_filtered.geometry.area.sum() * 111320 * 111320  # 概算面積(m²)
+            st.metric("総面積(概算)", f"{total_area/1000000:.2f} km²")
+        
+        # データテーブル
+        if st.checkbox("データテーブルを表示"):
+            st.dataframe(gdf_filtered.drop(columns=['geometry']))
+        
     except Exception as e:
         st.error(f"エラーが発生しました: {str(e)}")
         st.info("国土数値情報ダウンロードサイト: https://nlftp.mlit.go.jp/ksj/")
