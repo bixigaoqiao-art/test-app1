@@ -1,105 +1,216 @@
 import streamlit as st
 import geopandas as gpd
 import folium
-from streamlit_folium import st_folium
+from folium import plugins
+from streamlit_folium import folium_static
+import pandas as pd
+import requests
+import zipfile
+import io
 import os
 
-# --- 設定 ---
-# データのファイルパス (ご自身のダウンロードしたファイルに合わせて変更してください)
-# Shapefile (.shp) のファイルを指定することを推奨
-DATA_FILE = "path/to/your/A31_Hita_Flood_Data.shp" 
-# ※ GMLファイルの場合、読み込み前に解凍が必要な場合があります。
+st.set_page_config(page_title="日田市洪水ハザードマップ", layout="wide")
 
-# 日田市の中心座標 (概算)
-HITA_LAT = 33.310
-HITA_LON = 130.940
+st.title("🌊 日田市洪水浸水想定区域ハザードマップ")
+st.markdown("国土数値情報の洪水浸水想定区域データを使用した日田市のハザードマップです")
 
-# --- データのロードと準備 ---
+# サイドバー
+st.sidebar.header("設定")
+st.sidebar.markdown("### 表示オプション")
+
+# 浸水深の色分け定義
+def get_depth_color(depth_code):
+    """浸水深コードに基づいて色を返す"""
+    color_map = {
+        1: '#FFFF00',  # 0.5m未満 - 黄色
+        2: '#FFD700',  # 0.5-1.0m - 金色
+        3: '#FFA500',  # 1.0-2.0m - オレンジ
+        4: '#FF6347',  # 2.0-5.0m - トマト色
+        5: '#FF0000',  # 5.0-10.0m - 赤
+        6: '#8B0000',  # 10.0-20.0m - 濃い赤
+        7: '#4B0082',  # 20.0m以上 - インディゴ
+    }
+    return color_map.get(depth_code, '#808080')
+
+def get_depth_label(depth_code):
+    """浸水深コードに基づいてラベルを返す"""
+    label_map = {
+        1: '0.5m未満',
+        2: '0.5-1.0m',
+        3: '1.0-2.0m',
+        4: '2.0-5.0m',
+        5: '5.0-10.0m',
+        6: '10.0-20.0m',
+        7: '20.0m以上',
+    }
+    return label_map.get(depth_code, '不明')
+
+# データ読み込みのキャッシュ
 @st.cache_data
-def load_data(file_path):
-    """地理空間データをロードし、必要な処理を行う"""
-    if not os.path.exists(file_path):
-        st.error(f"データファイルが見つかりません: {file_path}")
-        st.stop()
+def load_sample_data():
+    """サンプルデータを作成（実際のデータがない場合）"""
+    # 日田市の中心座標
+    hita_center = [33.3219, 130.9408]
     
-    try:
-        # GeoPandasでデータを読み込み
-        # encodingを 'shift_jis' などに変更する必要があるかもしれません
-        gdf = gpd.read_file(file_path)
-        
-        # 浸水深の属性名を確認し、必要に応じてリネーム (例: 'A31_001'を 'D_CLASS'と仮定)
-        # 属性名はデータセットのバージョンによって異なるため、ご自身のデータを確認してください
-        # 国土数値情報では、浸水深のランクを示す属性が使われます (例: A31_001,浸水深ランク)
-        # 属性名が不明な場合は、print(gdf.columns) で確認してください
-        
-        # 例: 浸水深ランクの属性名を 'D_CLASS' と仮定して列を追加
-        if 'D_CLASS' in gdf.columns:
-             gdf['浸水深ランク'] = gdf['D_CLASS']
-        elif 'A31_001' in gdf.columns: # 一般的な国土数値情報の一例
-             gdf['浸水深ランク'] = gdf['A31_001']
+    # サンプルポリゴンデータ
+    sample_polygons = []
+    offsets = [
+        (0.01, 0.01, 2), (0.02, 0.01, 3), (-0.01, 0.01, 4),
+        (0.01, -0.01, 3), (-0.02, -0.01, 5), (0.03, 0.02, 4)
+    ]
+    
+    for offset_x, offset_y, depth in offsets:
+        lat, lon = hita_center[0] + offset_y, hita_center[1] + offset_x
+        polygon = [
+            [lon - 0.005, lat - 0.005],
+            [lon + 0.005, lat - 0.005],
+            [lon + 0.005, lat + 0.005],
+            [lon - 0.005, lat + 0.005],
+            [lon - 0.005, lat - 0.005]
+        ]
+        sample_polygons.append({
+            'geometry': {'type': 'Polygon', 'coordinates': [polygon]},
+            'depth_code': depth,
+            'depth_label': get_depth_label(depth)
+        })
+    
+    return gpd.GeoDataFrame.from_features(sample_polygons, crs="EPSG:4326")
+
+# メイン処理
+try:
+    st.info("💡 このアプリはデモ版です。実際の国土数値情報データを使用する場合は、データをダウンロードして読み込んでください。")
+    
+    # ファイルアップロード機能
+    uploaded_file = st.sidebar.file_uploader(
+        "GeoJSON/Shapefileをアップロード", 
+        type=['geojson', 'json', 'zip']
+    )
+    
+    if uploaded_file is not None:
+        if uploaded_file.name.endswith('.zip'):
+            # Shapefileの場合
+            with zipfile.ZipFile(uploaded_file) as z:
+                z.extractall('temp_data')
+            shp_files = [f for f in os.listdir('temp_data') if f.endswith('.shp')]
+            if shp_files:
+                gdf = gpd.read_file(f'temp_data/{shp_files[0]}')
         else:
-             st.warning("浸水深ランクを示す属性列が見つかりません。属性名を確認してください。")
-             return gdf
-
-        # 浸水深ランクに基づく色分けの設定
-        # 国土数値情報の凡例に基づいて色を割り当てます
-        def get_color(d_class):
-            if d_class == 1: return '#00BFFF' # 0.5m未満
-            if d_class == 2: return '#1E90FF' # 0.5m～3.0m
-            if d_class == 3: return '#0000CD' # 3.0m～5.0m
-            if d_class == 4: return '#4B0082' # 5.0m以上
-            return '#808080' # その他/不明
+            # GeoJSONの場合
+            gdf = gpd.read_file(uploaded_file)
         
-        gdf['color'] = gdf['浸水深ランク'].apply(get_color)
-        
-        return gdf
-    except Exception as e:
-        st.error(f"データの読み込み中にエラーが発生しました: {e}")
-        st.stop()
-
-
-# --- Streamlit アプリケーションの本体 ---
-def main():
-    st.set_page_config(layout="wide")
-    st.title("日田市 洪水浸水想定区域 ハザードマップ")
+        st.success("✅ データを読み込みました")
+    else:
+        # サンプルデータを使用
+        gdf = load_sample_data()
+        st.warning("⚠️ サンプルデータを表示しています")
     
-    # データのロード
-    gdf = load_data(DATA_FILE)
-
-    if gdf is not None:
-        st.subheader("浸水想定区域の表示")
+    # CRSを確認・変換
+    if gdf.crs != "EPSG:4326":
+        gdf = gdf.to_crs("EPSG:4326")
+    
+    # 表示する浸水深の選択
+    if 'depth_code' in gdf.columns:
+        unique_depths = sorted(gdf['depth_code'].unique())
+        selected_depths = st.sidebar.multiselect(
+            "表示する浸水深",
+            options=unique_depths,
+            default=unique_depths,
+            format_func=get_depth_label
+        )
+        gdf_filtered = gdf[gdf['depth_code'].isin(selected_depths)]
+    else:
+        gdf_filtered = gdf
+    
+    # 地図の作成
+    st.subheader("📍 洪水浸水想定区域マップ")
+    
+    # 地図の中心座標を計算
+    bounds = gdf_filtered.total_bounds
+    center_lat = (bounds[1] + bounds[3]) / 2
+    center_lon = (bounds[0] + bounds[2]) / 2
+    
+    # Folium地図の作成
+    m = folium.Map(
+        location=[center_lat, center_lon],
+        zoom_start=13,
+        tiles='OpenStreetMap'
+    )
+    
+    # レイヤーコントロール用
+    feature_group = folium.FeatureGroup(name="浸水想定区域")
+    
+    # ポリゴンを地図に追加
+    for idx, row in gdf_filtered.iterrows():
+        depth_code = row.get('depth_code', 0)
+        depth_label = row.get('depth_label', get_depth_label(depth_code))
         
-        # 凡例の表示
-        st.sidebar.markdown("### 浸水深ランク凡例")
-        st.sidebar.markdown(f"<div style='background-color:#00BFFF; padding: 5px; margin: 2px; color: black;'>■ ランク1: 0.5m未満</div>", unsafe_allow_html=True)
-        st.sidebar.markdown(f"<div style='background-color:#1E90FF; padding: 5px; margin: 2px; color: white;'>■ ランク2: 0.5m～3.0m</div>", unsafe_allow_html=True)
-        st.sidebar.markdown(f"<div style='background-color:#0000CD; padding: 5px; margin: 2px; color: white;'>■ ランク3: 3.0m～5.0m</div>", unsafe_allow_html=True)
-        st.sidebar.markdown(f"<div style='background-color:#4B0082; padding: 5px; margin: 2px; color: white;'>■ ランク4: 5.0m以上</div>", unsafe_allow_html=True)
+        folium.GeoJson(
+            row['geometry'],
+            style_function=lambda x, dc=depth_code: {
+                'fillColor': get_depth_color(dc),
+                'color': 'black',
+                'weight': 1,
+                'fillOpacity': 0.6
+            },
+            tooltip=f"浸水深: {depth_label}"
+        ).add_to(feature_group)
+    
+    feature_group.add_to(m)
+    
+    # レイヤーコントロールを追加
+    folium.LayerControl().add_to(m)
+    
+    # 凡例を追加
+    legend_html = '''
+    <div style="position: fixed; 
+                bottom: 50px; right: 50px; width: 180px; height: auto; 
+                background-color: white; border:2px solid grey; z-index:9999; 
+                font-size:14px; padding: 10px">
+    <p style="margin:0; font-weight:bold;">浸水深凡例</p>
+    '''
+    for code in range(1, 8):
+        color = get_depth_color(code)
+        label = get_depth_label(code)
+        legend_html += f'<p style="margin:3px 0;"><span style="background-color:{color}; width:20px; height:15px; display:inline-block; margin-right:5px;"></span>{label}</p>'
+    
+    legend_html += '</div>'
+    m.get_root().html.add_child(folium.Element(legend_html))
+    
+    # 地図を表示
+    folium_static(m, width=1200, height=600)
+    
+    # 統計情報
+    st.subheader("📊 統計情報")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("総区域数", len(gdf_filtered))
+    
+    with col2:
+        if 'depth_code' in gdf_filtered.columns:
+            max_depth = gdf_filtered['depth_code'].max()
+            st.metric("最大浸水深", get_depth_label(max_depth))
+    
+    with col3:
+        total_area = gdf_filtered.geometry.area.sum() * 111320 * 111320  # 概算面積(m²)
+        st.metric("総面積(概算)", f"{total_area/1000000:.2f} km²")
+    
+    # データテーブル
+    if st.checkbox("データテーブルを表示"):
+        st.dataframe(gdf_filtered.drop(columns=['geometry']))
 
-        # Foliumマップの作成
-        m = folium.Map(location=[HITA_LAT, HITA_LON], zoom_start=12, tiles='OpenStreetMap')
-        
-        # GeoDataFrameの各ポリゴンをマップに追加
-        # 浸水深ランクに基づいて色分けして描画
-        for _, row in gdf.iterrows():
-            if row.geometry.geom_type == 'Polygon':
-                # GeoJSON形式でプロットするために、座標を(lat, lon)のリストに変換
-                coords = [(lat, lon) for lon, lat in row.geometry.exterior.coords]
-                
-                folium.Polygon(
-                    locations=coords,
-                    tooltip=f"浸水深ランク: {row['浸水深ランク']}", # マウスオーバーで情報表示
-                    color=row['color'],
-                    fill=True,
-                    fill_color=row['color'],
-                    fill_opacity=0.6,
-                    weight=1
-                ).add_to(m)
+except Exception as e:
+    st.error(f"エラーが発生しました: {str(e)}")
+    st.info("国土数値情報ダウンロードサイト: https://nlftp.mlit.go.jp/ksj/")
 
-        # StreamlitにFoliumマップを表示
-        st_folium(m, width=700, height=500)
-        
-        st.info("💡 浸水想定区域の色分けは、国土数値情報（洪水浸水想定区域データ）の凡例に基づいています。詳細な情報や最新のハザードマップは日田市公式の情報をご確認ください。")
+# フッター
+st.sidebar.markdown("---")
+st.sidebar.markdown("### データについて")
+st.sidebar.markdown("""
+このアプリは国土数値情報の洪水浸水想定区域データを使用します。
 
-if __name__ == "__main__":
-    main()
+**データ取得先:**
+- [国土数値情報ダウンロードサービス](https://nlftp.mlit.go.jp/ksj/)
+- カテゴリ: 洪水浸水想定区域
+- 地域: 大分県日田市
+""")
