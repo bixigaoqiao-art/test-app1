@@ -49,11 +49,16 @@ def get_depth_label(depth_code):
 @st.cache_data
 def load_sample_data():
     """サンプルデータを作成（実際のデータがない場合）"""
+    from shapely.geometry import Polygon
+    
     # 日田市の中心座標
     hita_center = [33.3219, 130.9408]
     
     # サンプルポリゴンデータ
-    sample_polygons = []
+    geometries = []
+    depth_codes = []
+    depth_labels = []
+    
     offsets = [
         (0.01, 0.01, 2), (0.02, 0.01, 3), (-0.01, 0.01, 4),
         (0.01, -0.01, 3), (-0.02, -0.01, 5), (0.03, 0.02, 4)
@@ -61,20 +66,24 @@ def load_sample_data():
     
     for offset_x, offset_y, depth in offsets:
         lat, lon = hita_center[0] + offset_y, hita_center[1] + offset_x
-        polygon = [
+        polygon = Polygon([
             [lon - 0.005, lat - 0.005],
             [lon + 0.005, lat - 0.005],
             [lon + 0.005, lat + 0.005],
             [lon - 0.005, lat + 0.005],
             [lon - 0.005, lat - 0.005]
-        ]
-        sample_polygons.append({
-            'geometry': {'type': 'Polygon', 'coordinates': [polygon]},
-            'depth_code': depth,
-            'depth_label': get_depth_label(depth)
-        })
+        ])
+        geometries.append(polygon)
+        depth_codes.append(depth)
+        depth_labels.append(get_depth_label(depth))
     
-    return gpd.GeoDataFrame.from_features(sample_polygons, crs="EPSG:4326")
+    gdf = gpd.GeoDataFrame({
+        'depth_code': depth_codes,
+        'depth_label': depth_labels,
+        'geometry': geometries
+    }, crs="EPSG:4326")
+    
+    return gdf
 
 # メイン処理
 try:
