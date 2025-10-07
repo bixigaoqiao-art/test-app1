@@ -86,16 +86,18 @@ def load_sample_data():
     return gdf
 
 # メイン処理
-try:
-    st.info("💡 このアプリはデモ版です。実際の国土数値情報データを使用する場合は、データをダウンロードして読み込んでください。")
-    
-    # ファイルアップロード機能
-    uploaded_file = st.sidebar.file_uploader(
-        "GeoJSON/Shapefileをアップロード", 
-        type=['geojson', 'json', 'zip']
-    )
-    
-    if uploaded_file is not None:
+st.info("💡 このアプリはデモ版です。実際の国土数値情報データを使用する場合は、データをダウンロードして読み込んでください。")
+
+# ファイルアップロード機能
+uploaded_file = st.sidebar.file_uploader(
+    "GeoJSON/Shapefileをアップロード", 
+    type=['geojson', 'json', 'zip']
+)
+
+gdf = None
+
+if uploaded_file is not None:
+    try:
         if uploaded_file.name.endswith('.zip'):
             # Shapefileの場合
             with zipfile.ZipFile(uploaded_file) as z:
@@ -108,10 +110,17 @@ try:
             gdf = gpd.read_file(uploaded_file)
         
         st.success("✅ データを読み込みました")
-    else:
-        # サンプルデータを使用
+    except Exception as e:
+        st.error(f"ファイルの読み込みに失敗しました: {str(e)}")
         gdf = load_sample_data()
         st.warning("⚠️ サンプルデータを表示しています")
+else:
+    # サンプルデータを使用
+    gdf = load_sample_data()
+    st.warning("⚠️ サンプルデータを表示しています")
+
+if gdf is not None:
+    try:
     
     # CRSを確認・変換
     if gdf.crs != "EPSG:4326":
@@ -207,10 +216,10 @@ try:
     # データテーブル
     if st.checkbox("データテーブルを表示"):
         st.dataframe(gdf_filtered.drop(columns=['geometry']))
-
-except Exception as e:
-    st.error(f"エラーが発生しました: {str(e)}")
-    st.info("国土数値情報ダウンロードサイト: https://nlftp.mlit.go.jp/ksj/")
+    
+    except Exception as e:
+        st.error(f"エラーが発生しました: {str(e)}")
+        st.info("国土数値情報ダウンロードサイト: https://nlftp.mlit.go.jp/ksj/")
 
 # フッター
 st.sidebar.markdown("---")
