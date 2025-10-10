@@ -346,13 +346,16 @@ with col1:
     実際のデータに基づいた正確なハザードマップを表示できます。
     
     **対応フォーマット:**
-    - GeoJSON (.geojson, .json)
+    - GeoJSON (.geojson, .json) ← **推奨**
     - Shapefile (.zip形式でアップロード)
+    - KML (.kml)
+    
+    **📌 おすすめ**: GeoJSON形式が最も確実に読み込めます。
     """)
     
     uploaded_file = st.file_uploader(
         "データファイルを選択",
-        type=['geojson', 'json', 'zip'],
+        type=['geojson', 'json', 'zip', 'kml'],
         help="国土交通省のデータポータルからダウンロードした洪水浸水想定区域データ"
     )
     
@@ -362,33 +365,72 @@ with col1:
                 # Shapefileの処理
                 import tempfile
                 import zipfile
+                import os
                 
                 with tempfile.TemporaryDirectory() as tmpdir:
+                    # ZIPファイルを展開
                     with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
                         zip_ref.extractall(tmpdir)
                     
-                    # .shpファイルを探す
-                    shp_files = list(Path(tmpdir).glob('*.shp'))
+                    # ZIPファイルの中身を確認
+                    all_files = []
+                    for root, dirs, files in os.walk(tmpdir):
+                        for file in files:
+                            rel_path = os.path.relpath(os.path.join(root, file), tmpdir)
+                            all_files.append(rel_path)
+                    
+                    st.info(f"📂 ZIPファイル内のファイル一覧:\n" + "\n".join(all_files))
+                    
+                    # .shpファイルを再帰的に探す
+                    shp_files = []
+                    for root, dirs, files in os.walk(tmpdir):
+                        for file in files:
+                            if file.endswith('.shp'):
+                                shp_files.append(os.path.join(root, file))
+                    
                     if shp_files:
                         gdf = gpd.read_file(shp_files[0])
                         st.session_state.uploaded_data = gdf
                         st.success(f"✅ Shapefileを読み込みました: {len(gdf)} 件のデータ")
+                        
+                        # データのプレビュー
+                        with st.expander("データのプレビュー"):
+                            st.dataframe(gdf.head())
+                            if 'geometry' in gdf.columns:
+                                st.write("✅ ジオメトリ情報を含んでいます")
                     else:
                         st.error("❌ ZIPファイル内に.shpファイルが見つかりません")
+                        st.warning("💡 GeoJSON形式(.geojson または .json)でアップロードしてみてください")
             else:
-                # GeoJSONの処理
-                geojson_data = json.load(uploaded_file)
-                st.session_state.uploaded_data = geojson_data
-                st.success(f"✅ GeoJSONファイルを読み込みました")
+                # GeoJSONまたはKMLの処理
+                file_content = uploaded_file.read()
                 
-                # データのプレビュー
-                if 'features' in geojson_data:
-                    st.info(f"📊 データ数: {len(geojson_data['features'])} 件")
+                # KMLファイルの場合
+                if uploaded_file.name.endswith('.kml'):
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.kml') as tmp_file:
+                        tmp_file.write(file_content)
+                        tmp_file_path = tmp_file.name
                     
-                    # 最初のデータをプレビュー
-                    if len(geojson_data['features']) > 0:
-                        with st.expander("データのプレビュー（最初の1件）"):
-                            st.json(geojson_data['features'][0])
+                    # KMLをGeoDataFrameとして読み込む
+                    gdf = gpd.read_file(tmp_file_path, driver='KML')
+                    st.session_state.uploaded_data = gdf
+                    st.success(f"✅ KMLファイルを読み込みました: {len(gdf)} 件のデータ")
+                    os.unlink(tmp_file_path)
+                else:
+                    # GeoJSONの処理
+                    geojson_data = json.loads(file_content)
+                    st.session_state.uploaded_data = geojson_data
+                    st.success(f"✅ GeoJSONファイルを読み込みました")
+                    
+                    # データのプレビュー
+                    if 'features' in geojson_data:
+                        st.info(f"📊 データ数: {len(geojson_data['features'])} 件")
+                        
+                        # 最初のデータをプレビュー
+                        if len(geojson_data['features']) > 0:
+                            with st.expander("データのプレビュー（最初の1件）"):
+                                st.json(geojson_data['features'][0])
         
         except Exception as e:
             st.error(f"❌ ファイルの読み込みに失敗しました: {str(e)}")
