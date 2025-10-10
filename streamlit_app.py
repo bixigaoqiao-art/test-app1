@@ -338,116 +338,347 @@ with col1:
 st.markdown("---")
 st.subheader("📁 洪水浸水想定区域データの読み込み")
 
-col1, col2 = st.columns([2, 1])
+# タブで機能を分ける
+tab1, tab2 = st.tabs(["📤 データアップロード", "🔄 形式変換ツール"])
 
-with col1:
+with tab1:
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        st.markdown("""
+        国土交通省の**洪水浸水想定区域データ**をアップロードすると、
+        実際のデータに基づいた正確なハザードマップを表示できます。
+        
+        **対応フォーマット:**
+        - GeoJSON (.geojson, .json) ← **推奨**
+        - Shapefile (.zip形式でアップロード)
+        - KML (.kml)
+        
+        **📌 おすすめ**: GeoJSON形式が最も確実に読み込めます。
+        """)
+        
+        uploaded_file = st.file_uploader(
+            "データファイルを選択",
+            type=['geojson', 'json', 'zip', 'kml'],
+            help="国土交通省のデータポータルからダウンロードした洪水浸水想定区域データ",
+            key="main_uploader"
+        )
+        
+        if uploaded_file is not None:
+            try:
+                if uploaded_file.name.endswith('.zip'):
+                    # Shapefileの処理
+                    import tempfile
+                    import zipfile
+                    import os
+                    
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        # ZIPファイルを展開
+                        with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
+                            zip_ref.extractall(tmpdir)
+                        
+                        # ZIPファイルの中身を確認
+                        all_files = []
+                        for root, dirs, files in os.walk(tmpdir):
+                            for file in files:
+                                rel_path = os.path.relpath(os.path.join(root, file), tmpdir)
+                                all_files.append(rel_path)
+                        
+                        st.info(f"📂 ZIPファイル内のファイル一覧:\n" + "\n".join(all_files))
+                        
+                        # .shpファイルを再帰的に探す
+                        shp_files = []
+                        for root, dirs, files in os.walk(tmpdir):
+                            for file in files:
+                                if file.endswith('.shp'):
+                                    shp_files.append(os.path.join(root, file))
+                        
+                        if shp_files:
+                            gdf = gpd.read_file(shp_files[0])
+                            st.session_state.uploaded_data = gdf
+                            st.success(f"✅ Shapefileを読み込みました: {len(gdf)} 件のデータ")
+                            
+                            # データのプレビュー
+                            with st.expander("データのプレビュー"):
+                                st.dataframe(gdf.head())
+                                if 'geometry' in gdf.columns:
+                                    st.write("✅ ジオメトリ情報を含んでいます")
+                                    
+                            # GeoJSONダウンロードボタン
+                            geojson_str = gdf.to_json()
+                            st.download_button(
+                                label="📥 GeoJSON形式でダウンロード",
+                                data=geojson_str,
+                                file_name="converted_flood_data.geojson",
+                                mime="application/json"
+                            )
+                        else:
+                            st.error("❌ ZIPファイル内に.shpファイルが見つかりません")
+                            st.warning("💡 下の「形式変換ツール」タブをお試しください")
+                else:
+                    # GeoJSONまたはKMLの処理
+                    file_content = uploaded_file.read()
+                    
+                    # KMLファイルの場合
+                    if uploaded_file.name.endswith('.kml'):
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.kml') as tmp_file:
+                            tmp_file.write(file_content)
+                            tmp_file_path = tmp_file.name
+                        
+                        # KMLをGeoDataFrameとして読み込む
+                        gdf = gpd.read_file(tmp_file_path, driver='KML')
+                        st.session_state.uploaded_data = gdf
+                        st.success(f"✅ KMLファイルを読み込みました: {len(gdf)} 件のデータ")
+                        os.unlink(tmp_file_path)
+                        
+                        # GeoJSONダウンロードボタン
+                        geojson_str = gdf.to_json()
+                        st.download_button(
+                            label="📥 GeoJSON形式でダウンロード",
+                            data=geojson_str,
+                            file_name="converted_flood_data.geojson",
+                            mime="application/json"
+                        )
+                    else:
+                        # GeoJSONの処理
+                        geojson_data = json.loads(file_content)
+                        st.session_state.uploaded_data = geojson_data
+                        st.success(f"✅ GeoJSONファイルを読み込みました")
+                        
+                        # データのプレビュー
+                        if 'features' in geojson_data:
+                            st.info(f"📊 データ数: {len(geojson_data['features'])} 件")
+                            
+                            # 最初のデータをプレビュー
+                            if len(geojson_data['features']) > 0:
+                                with st.expander("データのプレビュー（最初の1件）"):
+                                    st.json(geojson_data['features'][0])
+            
+            except Exception as e:
+                st.error(f"❌ ファイルの読み込みに失敗しました: {str(e)}")
+                st.info("💡 下の「形式変換ツール」タブで変換を試してみてください")
+
+    with col2:
+        st.markdown("""
+        <div style="background: #f0f9ff; padding: 1rem; border-radius: 8px; border: 2px solid #3b82f6;">
+            <h4>📖 データ取得方法</h4>
+            <ol style="font-size: 0.9rem; margin: 0.5rem 0;">
+                <li>国土交通省の<a href="https://www.mlit.go.jp/" target="_blank">ウェブサイト</a>にアクセス</li>
+                <li>「洪水浸水想定区域データ」を検索</li>
+                <li>日田市または大分県のデータをダウンロード</li>
+                <li>このページにアップロード</li>
+                <li>自動的にGeoJSONに変換</li>
+            </ol>
+        </div>
+        """, unsafe_allow_html=True)
+
+with tab2:
     st.markdown("""
-    国土交通省の**洪水浸水想定区域データ（GeoJSON形式）**をアップロードすると、
-    実際のデータに基づいた正確なハザードマップを表示できます。
+    ## 🔄 GeoJSON変換ツール
     
-    **対応フォーマット:**
-    - GeoJSON (.geojson, .json) ← **推奨**
-    - Shapefile (.zip形式でアップロード)
-    - KML (.kml)
-    
-    **📌 おすすめ**: GeoJSON形式が最も確実に読み込めます。
+    Shapefile、KML、その他の地理空間データをGeoJSON形式に変換します。
+    変換後のファイルは、より軽量で扱いやすくなります。
     """)
     
-    uploaded_file = st.file_uploader(
-        "データファイルを選択",
-        type=['geojson', 'json', 'zip', 'kml'],
-        help="国土交通省のデータポータルからダウンロードした洪水浸水想定区域データ"
-    )
+    col1, col2 = st.columns([3, 2])
     
-    if uploaded_file is not None:
-        try:
-            if uploaded_file.name.endswith('.zip'):
-                # Shapefileの処理
+    with col1:
+        st.markdown("### 📤 変換元ファイルをアップロード")
+        
+        convert_file = st.file_uploader(
+            "変換したいファイルを選択",
+            type=['zip', 'kml', 'gpx', 'geojson', 'json'],
+            help="Shapefile(ZIP)、KML、GPXなどの地理空間データファイル",
+            key="convert_uploader"
+        )
+        
+        if convert_file is not None:
+            try:
                 import tempfile
                 import zipfile
                 import os
                 
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    # ZIPファイルを展開
-                    with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
-                        zip_ref.extractall(tmpdir)
-                    
-                    # ZIPファイルの中身を確認
-                    all_files = []
-                    for root, dirs, files in os.walk(tmpdir):
-                        for file in files:
-                            rel_path = os.path.relpath(os.path.join(root, file), tmpdir)
-                            all_files.append(rel_path)
-                    
-                    st.info(f"📂 ZIPファイル内のファイル一覧:\n" + "\n".join(all_files))
-                    
-                    # .shpファイルを再帰的に探す
-                    shp_files = []
-                    for root, dirs, files in os.walk(tmpdir):
-                        for file in files:
-                            if file.endswith('.shp'):
-                                shp_files.append(os.path.join(root, file))
-                    
-                    if shp_files:
-                        gdf = gpd.read_file(shp_files[0])
-                        st.session_state.uploaded_data = gdf
-                        st.success(f"✅ Shapefileを読み込みました: {len(gdf)} 件のデータ")
-                        
-                        # データのプレビュー
-                        with st.expander("データのプレビュー"):
-                            st.dataframe(gdf.head())
-                            if 'geometry' in gdf.columns:
-                                st.write("✅ ジオメトリ情報を含んでいます")
-                    else:
-                        st.error("❌ ZIPファイル内に.shpファイルが見つかりません")
-                        st.warning("💡 GeoJSON形式(.geojson または .json)でアップロードしてみてください")
-            else:
-                # GeoJSONまたはKMLの処理
-                file_content = uploaded_file.read()
+                gdf = None
                 
-                # KMLファイルの場合
-                if uploaded_file.name.endswith('.kml'):
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.kml') as tmp_file:
-                        tmp_file.write(file_content)
-                        tmp_file_path = tmp_file.name
+                with st.spinner("変換中..."):
+                    if convert_file.name.endswith('.zip'):
+                        # Shapefile ZIP の処理
+                        with tempfile.TemporaryDirectory() as tmpdir:
+                            with zipfile.ZipFile(convert_file, 'r') as zip_ref:
+                                zip_ref.extractall(tmpdir)
+                            
+                            # .shpファイルを探す
+                            shp_files = []
+                            for root, dirs, files in os.walk(tmpdir):
+                                for file in files:
+                                    if file.endswith('.shp'):
+                                        shp_files.append(os.path.join(root, file))
+                            
+                            if shp_files:
+                                st.info(f"📂 見つかったShapefileファイル: {len(shp_files)}個")
+                                
+                                # 複数のShapefileがある場合は選択させる
+                                if len(shp_files) > 1:
+                                    shp_names = [os.path.basename(f) for f in shp_files]
+                                    selected_shp = st.selectbox("変換するファイルを選択", shp_names)
+                                    selected_shp_path = shp_files[shp_names.index(selected_shp)]
+                                else:
+                                    selected_shp_path = shp_files[0]
+                                
+                                gdf = gpd.read_file(selected_shp_path)
+                                st.success(f"✅ Shapefileを読み込みました")
+                            else:
+                                st.error("❌ ZIPファイル内にShapefileが見つかりません")
                     
-                    # KMLをGeoDataFrameとして読み込む
-                    gdf = gpd.read_file(tmp_file_path, driver='KML')
-                    st.session_state.uploaded_data = gdf
-                    st.success(f"✅ KMLファイルを読み込みました: {len(gdf)} 件のデータ")
-                    os.unlink(tmp_file_path)
-                else:
-                    # GeoJSONの処理
-                    geojson_data = json.loads(file_content)
-                    st.session_state.uploaded_data = geojson_data
-                    st.success(f"✅ GeoJSONファイルを読み込みました")
-                    
-                    # データのプレビュー
-                    if 'features' in geojson_data:
-                        st.info(f"📊 データ数: {len(geojson_data['features'])} 件")
+                    elif convert_file.name.endswith('.kml'):
+                        # KMLの処理
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.kml') as tmp_file:
+                            tmp_file.write(convert_file.read())
+                            tmp_file_path = tmp_file.name
                         
-                        # 最初のデータをプレビュー
-                        if len(geojson_data['features']) > 0:
-                            with st.expander("データのプレビュー（最初の1件）"):
-                                st.json(geojson_data['features'][0])
+                        gdf = gpd.read_file(tmp_file_path, driver='KML')
+                        os.unlink(tmp_file_path)
+                        st.success(f"✅ KMLファイルを読み込みました")
+                    
+                    elif convert_file.name.endswith('.gpx'):
+                        # GPXの処理
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.gpx') as tmp_file:
+                            tmp_file.write(convert_file.read())
+                            tmp_file_path = tmp_file.name
+                        
+                        gdf = gpd.read_file(tmp_file_path, driver='GPX')
+                        os.unlink(tmp_file_path)
+                        st.success(f"✅ GPXファイルを読み込みました")
+                    
+                    elif convert_file.name.endswith(('.geojson', '.json')):
+                        # 既にGeoJSONの場合
+                        file_content = convert_file.read()
+                        geojson_data = json.loads(file_content)
+                        gdf = gpd.GeoDataFrame.from_features(geojson_data['features'])
+                        st.info("ℹ️ このファイルは既にGeoJSON形式です")
+                
+                if gdf is not None:
+                    # データ情報の表示
+                    st.markdown("---")
+                    st.markdown("### 📊 変換結果")
+                    
+                    col_info1, col_info2, col_info3 = st.columns(3)
+                    with col_info1:
+                        st.metric("データ件数", f"{len(gdf)} 件")
+                    with col_info2:
+                        st.metric("カラム数", f"{len(gdf.columns)} 個")
+                    with col_info3:
+                        if gdf.crs:
+                            st.metric("座標系", str(gdf.crs).split(':')[-1])
+                        else:
+                            st.metric("座標系", "未設定")
+                    
+                    # データプレビュー
+                    with st.expander("📋 データプレビュー（最初の5行）"):
+                        st.dataframe(gdf.head())
+                    
+                    # 座標系の変換オプション
+                    st.markdown("---")
+                    st.markdown("### 🌍 座標系の設定（オプション）")
+                    
+                    transform_crs = st.checkbox(
+                        "座標系を変換する（推奨: WGS84 / EPSG:4326）",
+                        value=True if gdf.crs and gdf.crs.to_epsg() != 4326 else False
+                    )
+                    
+                    if transform_crs:
+                        target_crs = st.selectbox(
+                            "変換先の座標系",
+                            ["EPSG:4326 (WGS84 - GPS標準)", "EPSG:3857 (Web メルカトル)", "EPSG:2451 (JGD2000 / 日本測地系)"],
+                            index=0
+                        )
+                        
+                        target_epsg = int(target_crs.split(':')[1].split(' ')[0])
+                        
+                        if st.button("🔄 座標系を変換"):
+                            gdf = gdf.to_crs(epsg=target_epsg)
+                            st.success(f"✅ {target_crs} に変換しました")
+                    
+                    # GeoJSONに変換
+                    st.markdown("---")
+                    st.markdown("### 💾 GeoJSON形式でダウンロード")
+                    
+                    # ファイル名の設定
+                    default_filename = convert_file.name.rsplit('.', 1)[0] + "_converted.geojson"
+                    output_filename = st.text_input("出力ファイル名", value=default_filename)
+                    
+                    # 美しい整形オプション
+                    pretty_print = st.checkbox("読みやすく整形する（ファイルサイズが大きくなります）", value=False)
+                    
+                    # GeoJSON生成
+                    if pretty_print:
+                        geojson_str = gdf.to_json(indent=2)
+                    else:
+                        geojson_str = gdf.to_json()
+                    
+                    # ファイルサイズ表示
+                    file_size_kb = len(geojson_str.encode('utf-8')) / 1024
+                    st.info(f"📦 ファイルサイズ: {file_size_kb:.2f} KB")
+                    
+                    # ダウンロードボタン
+                    st.download_button(
+                        label="📥 GeoJSONファイルをダウンロード",
+                        data=geojson_str,
+                        file_name=output_filename,
+                        mime="application/json",
+                        use_container_width=True
+                    )
+                    
+                    st.success("✅ 変換完了！上のボタンからダウンロードできます")
+                    
+                    # 地図プレビュー
+                    st.markdown("---")
+                    st.markdown("### 🗺️ データプレビュー（地図）")
+                    
+                    preview_map = folium.Map(
+                        location=[gdf.geometry.centroid.y.mean(), gdf.geometry.centroid.x.mean()],
+                        zoom_start=12
+                    )
+                    
+                    folium.GeoJson(
+                        geojson_str,
+                        style_function=lambda x: {
+                            'fillColor': '#3b82f6',
+                            'color': '#1e40af',
+                            'weight': 2,
+                            'fillOpacity': 0.4
+                        }
+                    ).add_to(preview_map)
+                    
+                    folium_static(preview_map, width=700, height=400)
+                    
+            except Exception as e:
+                st.error(f"❌ 変換に失敗しました: {str(e)}")
+                st.info("💡 ファイル形式が正しいか確認してください")
+    
+    with col2:
+        st.markdown("""
+        <div style="background: #fef3c7; padding: 1rem; border-radius: 8px; border: 2px solid #f59e0b; margin-top: 2rem;">
+            <h4>💡 変換のヒント</h4>
+            <ul style="font-size: 0.85rem; margin: 0.5rem 0;">
+                <li><strong>Shapefile</strong>: .shp, .shx, .dbf, .prjファイルを全てZIPに圧縮してアップロード</li>
+                <li><strong>座標系</strong>: Web地図で使用する場合はEPSG:4326を推奨</li>
+                <li><strong>ファイルサイズ</strong>: 大きなファイルは整形なしで変換すると軽量化できます</li>
+                <li><strong>プレビュー</strong>: 変換後に地図上でデータを確認できます</li>
+            </ul>
+        </div>
         
-        except Exception as e:
-            st.error(f"❌ ファイルの読み込みに失敗しました: {str(e)}")
-
-with col2:
-    st.markdown("""
-    <div style="background: #f0f9ff; padding: 1rem; border-radius: 8px; border: 2px solid #3b82f6;">
-        <h4>📖 データ取得方法</h4>
-        <ol style="font-size: 0.9rem; margin: 0.5rem 0;">
-            <li>国土交通省の<a href="https://www.mlit.go.jp/" target="_blank">ウェブサイト</a>にアクセス</li>
-            <li>「洪水浸水想定区域データ」を検索</li>
-            <li>日田市または大分県のデータをダウンロード</li>
-            <li>GeoJSON形式で保存</li>
-            <li>このページにアップロード</li>
-        </ol>
-    </div>
-    """, unsafe_allow_html=True)
+        <div style="background: #dbeafe; padding: 1rem; border-radius: 8px; border: 2px solid #3b82f6; margin-top: 1rem;">
+            <h4>🔧 対応形式</h4>
+            <ul style="font-size: 0.85rem; margin: 0.5rem 0;">
+                <li>Shapefile (ZIP)</li>
+                <li>KML</li>
+                <li>GPX</li>
+                <li>GeoJSON</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
 
 # 避難時の注意事項
 st.markdown("---")
