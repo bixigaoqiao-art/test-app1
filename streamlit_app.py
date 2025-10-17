@@ -13,7 +13,115 @@ st.set_page_config(
     page_title="日田市 洪水ハザードマップ",
     page_icon="💧",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initimport streamlit as st
+import pandas as pd
+import folium
+from streamlit_folium import st_folium
+import geopandas as gpd
+from pathlib import Path
+
+# ページ設定
+st.set_page_config(
+    page_title="地図アプリケーション",
+    page_icon="🗺️",
+    layout="wide"
+)
+
+# タイトル
+st.title("🗺️ 地図アプリケーション")
+
+# サイドバー
+st.sidebar.header("設定")
+
+# サンプルデータの作成
+@st.cache_data
+def load_sample_data():
+    data = {
+        '名前': ['東京', '大阪', '名古屋', '福岡', '札幌'],
+        '緯度': [35.6762, 34.6937, 35.1815, 33.5904, 43.0642],
+        '経度': [139.6503, 135.5023, 136.9066, 130.4017, 141.3469],
+        '人口': [13960000, 8839000, 2296000, 1539000, 1953000]
+    }
+    return pd.DataFrame(data)
+
+# タブの作成
+tab1, tab2, tab3 = st.tabs(["📍 地図表示", "📊 データ表", "ℹ️ 情報"])
+
+with tab1:
+    st.header("地図表示")
+    
+    # データの読み込み
+    df = load_sample_data()
+    
+    # 地図の中心を選択
+    center_option = st.selectbox(
+        "地図の中心を選択",
+        df['名前'].tolist()
+    )
+    
+    # 選択された場所の座標を取得
+    center_data = df[df['名前'] == center_option].iloc[0]
+    
+    # 地図の作成
+    m = folium.Map(
+        location=[center_data['緯度'], center_data['経度']],
+        zoom_start=6,
+        tiles='OpenStreetMap'
+    )
+    
+    # マーカーの追加
+    for idx, row in df.iterrows():
+        folium.Marker(
+            location=[row['緯度'], row['経度']],
+            popup=f"{row['名前']}<br>人口: {row['人口']:,}人",
+            tooltip=row['名前'],
+            icon=folium.Icon(color='blue', icon='info-sign')
+        ).add_to(m)
+    
+    # 地図の表示（修正版）
+    st_folium(m, width=900, height=600)
+
+with tab2:
+    st.header("データ表")
+    
+    # データフレームの表示（修正版）
+    st.dataframe(df, width='stretch')
+    
+    # 統計情報
+    st.subheader("統計情報")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("都市数", len(df))
+    with col2:
+        st.metric("平均緯度", f"{df['緯度'].mean():.2f}")
+    with col3:
+        st.metric("総人口", f"{df['人口'].sum():,}人")
+
+with tab3:
+    st.header("アプリケーション情報")
+    
+    st.markdown("""
+    ### 機能
+    - 📍 インタラクティブな地図表示
+    - 📊 データテーブル表示
+    - 🎯 マーカーによる位置表示
+    
+    ### 使い方
+    1. 「地図表示」タブで地図の中心を選択
+    2. マーカーをクリックして詳細情報を表示
+    3. 「データ表」タブで統計情報を確認
+    
+    ### 技術スタック
+    - Streamlit
+    - Folium
+    - GeoPandas
+    - Pandas
+    """)
+
+# フッター
+st.sidebar.markdown("---")
+st.sidebar.info("アプリケーションが正常に動作しています ✅")ial_sidebar_state="expanded"
 )
 
 # カスタムCSS
