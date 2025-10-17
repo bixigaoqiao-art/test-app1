@@ -5,6 +5,8 @@ from streamlit_folium import folium_static
 import json
 import geopandas as gpd
 from pathlib import Path
+import hashlib
+from datetime import datetime
 
 # ページ設定
 st.set_page_config(
@@ -68,12 +70,66 @@ st.markdown("""
         border: 2px solid #86efac;
         margin: 0.5rem 0;
     }
+    .dataset-card {
+        background: white;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 2px solid #e5e7eb;
+        margin: 0.5rem 0;
+    }
+    .dataset-card.active {
+        border-color: #3b82f6;
+        background: #eff6ff;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # セッション状態の初期化
-if 'uploaded_data' not in st.session_state:
-    st.session_state.uploaded_data = None
+if 'datasets' not in st.session_state:
+    st.session_state.datasets = {}
+if 'dataset_counter' not in st.session_state:
+    st.session_state.dataset_counter = 0
+
+# データセットの色パレット
+COLOR_PALETTE = [
+    '#8B0000', '#DC143C', '#FF6347', '#FFA07A', '#4169E1',
+    '#9370DB', '#20B2AA', '#32CD32', '#FFD700', '#FF69B4'
+]
+
+def generate_dataset_id(filename):
+    """ファイル名からユニークなIDを生成"""
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    hash_str = hashlib.md5(f"{filename}{timestamp}".encode()).hexdigest()[:8]
+    return f"dataset_{hash_str}"
+
+def add_dataset(name, data, data_type, source_file):
+    """データセットを追加"""
+    dataset_id = generate_dataset_id(name)
+    color_index = st.session_state.dataset_counter % len(COLOR_PALETTE)
+    
+    st.session_state.datasets[dataset_id] = {
+        'id': dataset_id,
+        'name': name,
+        'data': data,
+        'type': data_type,
+        'source_file': source_file,
+        'color': COLOR_PALETTE[color_index],
+        'visible': True,
+        'opacity': 0.6,
+        'added_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    st.session_state.dataset_counter += 1
+    return dataset_id
+
+def remove_dataset(dataset_id):
+    """データセットを削除"""
+    if dataset_id in st.session_state.datasets:
+        del st.session_state.datasets[dataset_id]
+
+def toggle_dataset_visibility(dataset_id):
+    """データセットの表示/非表示を切り替え"""
+    if dataset_id in st.session_state.datasets:
+        st.session_state.datasets[dataset_id]['visible'] = not st.session_state.datasets[dataset_id]['visible']
 
 # ヘッダー
 st.markdown("""
@@ -96,54 +152,65 @@ st.markdown("""
 # サイドバー設定
 st.sidebar.header("🗺️ 表示設定")
 
-# 河川データの定義
-rivers_data = {
-    'all': {'name': '全河川表示', 'color': '#ff0000'},
-    'chikugo': {'name': '筑後川', 'color': '#ff0000', 'risk': 5},
-    'mikuma': {'name': '三隈川', 'color': '#ff4500', 'risk': 4},
-    'kagetsu': {'name': '花月川', 'color': '#ff8c00', 'risk': 3},
-    'ono': {'name': '大野川', 'color': '#ffa500', 'risk': 3}
-}
-
-# 河川選択
-selected_river = st.sidebar.selectbox(
-    "表示する河川を選択",
-    options=list(rivers_data.keys()),
-    format_func=lambda x: rivers_data[x]['name'],
-    index=0
-)
-
-# 表示オプション
+# データセット管理セクション
 st.sidebar.markdown("---")
-st.sidebar.subheader("🎛️ 表示オプション")
-show_shelters = st.sidebar.checkbox("避難所を表示", value=True)
-show_rivers = st.sidebar.checkbox("河川を表示", value=True)
-show_flood_areas = st.sidebar.checkbox("浸水想定区域を表示", value=True)
+st.sidebar.subheader("📊 読み込み済みデータセット")
 
-# 浸水深度の凡例
-st.sidebar.markdown("---")
-st.sidebar.subheader("📊 浸水深度の目安")
-
-depth_levels = [
-    {'depth': '5.0m以上', 'color': '#8B0000', 'desc': '2階の軒下まで浸水'},
-    {'depth': '3.0-5.0m', 'color': '#DC143C', 'desc': '1階の天井まで浸水'},
-    {'depth': '0.5-3.0m', 'color': '#FF6347', 'desc': '大人の腰まで浸水'},
-    {'depth': '0.5m未満', 'color': '#FFA07A', 'desc': '大人の膝まで浸水'}
-]
-
-for level in depth_levels:
-    st.sidebar.markdown(f"""
-    <div class="depth-legend">
-        <div style="display: flex; align-items: center; gap: 10px;">
-            <div style="width: 30px; height: 30px; background-color: {level['color']}; 
-                        border-radius: 5px; flex-shrink: 0;"></div>
-            <div>
-                <strong>{level['depth']}</strong><br>
-                <small style="color: #6b7280;">{level['desc']}</small>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+if len(st.session_state.datasets) == 0:
+    st.sidebar.info("データセットがまだ読み込まれていません。\n下部の「データアップロード」からファイルを追加してください。")
+else:
+    st.sidebar.markdown(f"**合計: {len(st.session_state.datasets)} 件**")
+    
+    for dataset_id, dataset in st.session_state.datasets.items():
+        with st.sidebar.expander(f"{'✅' if dataset['visible'] else '⬜'} {dataset['name']}", expanded=False):
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                st.markdown(f"""
+                <div style="font-size: 0.85rem;">
+                    <strong>ファイル:</strong> {dataset['source_file']}<br>
+                    <strong>追加日時:</strong> {dataset['added_at']}<br>
+                    <strong>形式:</strong> {dataset['type']}<br>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                # 色の表示
+                st.markdown(f"""
+                <div style="width: 30px; height: 30px; background-color: {dataset['color']}; 
+                            border-radius: 5px; margin: 5px auto;"></div>
+                """, unsafe_allow_html=True)
+            
+            # 表示/非表示切り替え
+            if st.button(
+                "👁️ 非表示" if dataset['visible'] else "👁️ 表示",
+                key=f"toggle_{dataset_id}",
+                use_container_width=True
+            ):
+                toggle_dataset_visibility(dataset_id)
+                st.rerun()
+            
+            # 透明度調整
+            new_opacity = st.slider(
+                "透明度",
+                0.1, 1.0, dataset['opacity'],
+                0.1,
+                key=f"opacity_{dataset_id}"
+            )
+            if new_opacity != dataset['opacity']:
+                st.session_state.datasets[dataset_id]['opacity'] = new_opacity
+            
+            # データ情報
+            if dataset['type'] == 'geodataframe':
+                st.markdown(f"**データ件数:** {len(dataset['data'])} 件")
+            elif dataset['type'] == 'geojson':
+                if 'features' in dataset['data']:
+                    st.markdown(f"**データ件数:** {len(dataset['data']['features'])} 件")
+            
+            # 削除ボタン
+            if st.button("🗑️ 削除", key=f"delete_{dataset_id}", use_container_width=True):
+                remove_dataset(dataset_id)
+                st.rerun()
 
 # 避難所データ
 shelters = [
@@ -153,6 +220,12 @@ shelters = [
     {'name': '咸宜小学校', 'lat': 33.3180, 'lng': 130.9390, 'capacity': 250},
     {'name': '桂林小学校', 'lat': 33.3150, 'lng': 130.9360, 'capacity': 200}
 ]
+
+# 表示オプション
+st.sidebar.markdown("---")
+st.sidebar.subheader("🎛️ 表示オプション")
+show_shelters = st.sidebar.checkbox("避難所を表示", value=True)
+show_base_layers = st.sidebar.checkbox("サンプルレイヤーを表示", value=False)
 
 # 避難所リスト表示
 if show_shelters:
@@ -172,22 +245,31 @@ col1, col2 = st.columns([3, 1])
 with col2:
     st.subheader("📊 統計情報")
     
-    # 統計カード
-    st.markdown("""
+    # データセット数
+    st.markdown(f"""
     <div class="stat-card">
-        <div class="stat-value">12.5 km²</div>
-        <div class="stat-label">浸水想定区域面積</div>
-        <small style="color: #9ca3af;">想定最大規模降雨時</small>
+        <div class="stat-value">{len(st.session_state.datasets)}</div>
+        <div class="stat-label">読み込み済みデータセット</div>
+        <small style="color: #9ca3af;">表示中: {sum(1 for d in st.session_state.datasets.values() if d['visible'])} 件</small>
     </div>
     """, unsafe_allow_html=True)
     
-    st.markdown("""
-    <div class="stat-card" style="margin-top: 1rem;">
-        <div class="stat-value">8,500人</div>
-        <div class="stat-label">想定浸水人口</div>
-        <small style="color: #9ca3af;">浸水深0.5m以上の区域内</small>
-    </div>
-    """, unsafe_allow_html=True)
+    # サンプル統計（実データがある場合は計算）
+    total_features = 0
+    for dataset in st.session_state.datasets.values():
+        if dataset['type'] == 'geodataframe':
+            total_features += len(dataset['data'])
+        elif dataset['type'] == 'geojson' and 'features' in dataset['data']:
+            total_features += len(dataset['data']['features'])
+    
+    if total_features > 0:
+        st.markdown(f"""
+        <div class="stat-card" style="margin-top: 1rem;">
+            <div class="stat-value">{total_features:,}</div>
+            <div class="stat-label">総データポイント数</div>
+            <small style="color: #9ca3af;">全データセット合計</small>
+        </div>
+        """, unsafe_allow_html=True)
     
     st.markdown("""
     <div class="stat-card" style="margin-top: 1rem;">
@@ -196,28 +278,13 @@ with col2:
         <small style="color: #9ca3af;">総収容人数: 1,650人</small>
     </div>
     """, unsafe_allow_html=True)
-    
-    # 河川別危険度
-    st.markdown("---")
-    st.subheader("⚠️ 河川別危険度")
-    
-    river_risk_data = []
-    for river_id, river_info in rivers_data.items():
-        if river_id != 'all' and 'risk' in river_info:
-            river_risk_data.append({
-                '河川名': river_info['name'],
-                '危険度': '⭐' * river_info['risk'],
-                'レベル': river_info['risk']
-            })
-    
-    risk_df = pd.DataFrame(river_risk_data)
-    st.dataframe(risk_df[['河川名', '危険度']], hide_index=True, use_container_width=True)
 
 with col1:
-    st.subheader("🗺️ 浸水想定区域マップ")
+    st.subheader("🗺️ 洪水ハザードマップ")
     
-    if selected_river != 'all':
-        st.info(f"📍 表示中: **{rivers_data[selected_river]['name']}**")
+    if len(st.session_state.datasets) > 0:
+        visible_count = sum(1 for d in st.session_state.datasets.values() if d['visible'])
+        st.info(f"📍 表示中のデータセット: {visible_count} / {len(st.session_state.datasets)}")
     
     # 地図の作成
     m = folium.Map(
@@ -226,82 +293,75 @@ with col1:
         tiles='OpenStreetMap'
     )
     
-    # 浸水想定エリアのサンプルデータ
-    flood_areas = [
-        {
-            'coords': [[33.3250, 130.9350], [33.3250, 130.9400], 
-                      [33.3200, 130.9400], [33.3200, 130.9350]],
-            'color': '#8B0000',
-            'depth': '5.0m以上',
-            'river': 'chikugo'
-        },
-        {
-            'coords': [[33.3280, 130.9320], [33.3280, 130.9420], 
-                      [33.3180, 130.9420], [33.3180, 130.9320]],
-            'color': '#DC143C',
-            'depth': '3.0-5.0m',
-            'river': 'mikuma'
-        },
-        {
-            'coords': [[33.3300, 130.9300], [33.3300, 130.9450], 
-                      [33.3150, 130.9450], [33.3150, 130.9300]],
-            'color': '#FF6347',
-            'depth': '0.5-3.0m',
-            'river': 'kagetsu'
-        },
-        {
-            'coords': [[33.3270, 130.9360], [33.3270, 130.9410], 
-                      [33.3220, 130.9410], [33.3220, 130.9360]],
-            'color': '#FFA07A',
-            'depth': '0.5m未満',
-            'river': 'ono'
-        }
-    ]
+    # サンプルレイヤーの描画
+    if show_base_layers:
+        sample_areas = [
+            {
+                'coords': [[33.3250, 130.9350], [33.3250, 130.9400], 
+                          [33.3200, 130.9400], [33.3200, 130.9350]],
+                'color': '#8B0000',
+                'name': 'サンプルエリア1'
+            },
+            {
+                'coords': [[33.3280, 130.9320], [33.3280, 130.9420], 
+                          [33.3180, 130.9420], [33.3180, 130.9320]],
+                'color': '#DC143C',
+                'name': 'サンプルエリア2'
+            }
+        ]
+        
+        for area in sample_areas:
+            folium.Polygon(
+                locations=area['coords'],
+                color=area['color'],
+                fill=True,
+                fillColor=area['color'],
+                fillOpacity=0.3,
+                weight=2,
+                popup=area['name']
+            ).add_to(m)
     
-    # 浸水エリアの描画
-    if show_flood_areas:
-        for area in flood_areas:
-            if selected_river == 'all' or selected_river == area['river']:
-                folium.Polygon(
-                    locations=area['coords'],
-                    color=area['color'],
-                    fill=True,
-                    fillColor=area['color'],
-                    fillOpacity=0.5,
-                    weight=2,
-                    popup=folium.Popup(
-                        f"<b>浸水深度:</b> {area['depth']}<br>"
-                        f"<b>河川:</b> {rivers_data[area['river']]['name']}",
-                        max_width=200
+    # 読み込まれたデータセットの描画
+    for dataset_id, dataset in st.session_state.datasets.items():
+        if not dataset['visible']:
+            continue
+        
+        try:
+            if dataset['type'] == 'geodataframe':
+                gdf = dataset['data']
+                
+                # GeoDataFrameをGeoJSONに変換
+                geojson_str = gdf.to_json()
+                
+                folium.GeoJson(
+                    geojson_str,
+                    name=dataset['name'],
+                    style_function=lambda x, color=dataset['color'], opacity=dataset['opacity']: {
+                        'fillColor': color,
+                        'color': color,
+                        'weight': 2,
+                        'fillOpacity': opacity
+                    },
+                    tooltip=folium.GeoJsonTooltip(
+                        fields=list(gdf.columns[:5]),
+                        aliases=[str(col) for col in gdf.columns[:5]],
+                        localize=True
                     )
                 ).add_to(m)
-    
-    # 河川ラインの描画
-    if show_rivers:
-        river_lines = {
-            'chikugo': [[33.3300, 130.9200], [33.3250, 130.9350], [33.3200, 130.9450]],
-            'mikuma': [[33.3280, 130.9250], [33.3220, 130.9400], [33.3180, 130.9420]],
-            'kagetsu': [[33.3350, 130.9300], [33.3250, 130.9380], [33.3180, 130.9400]],
-            'ono': [[33.3320, 130.9280], [33.3270, 130.9360], [33.3230, 130.9380]]
-        }
-        
-        if selected_river == 'all':
-            for river_id, coords in river_lines.items():
-                folium.PolyLine(
-                    coords,
-                    color=rivers_data[river_id]['color'],
-                    weight=5,
-                    opacity=0.8,
-                    popup=rivers_data[river_id]['name']
+                
+            elif dataset['type'] == 'geojson':
+                folium.GeoJson(
+                    dataset['data'],
+                    name=dataset['name'],
+                    style_function=lambda x, color=dataset['color'], opacity=dataset['opacity']: {
+                        'fillColor': color,
+                        'color': color,
+                        'weight': 2,
+                        'fillOpacity': opacity
+                    }
                 ).add_to(m)
-        elif selected_river in river_lines:
-            folium.PolyLine(
-                river_lines[selected_river],
-                color=rivers_data[selected_river]['color'],
-                weight=6,
-                opacity=0.9,
-                popup=rivers_data[selected_river]['name']
-            ).add_to(m)
+        except Exception as e:
+            st.error(f"データセット '{dataset['name']}' の描画エラー: {str(e)}")
     
     # 避難所マーカーの追加
     if show_shelters:
@@ -318,6 +378,9 @@ with col1:
                 icon=folium.Icon(color='green', icon='home', prefix='fa')
             ).add_to(m)
     
+    # レイヤーコントロールを追加
+    folium.LayerControl().add_to(m)
+    
     # 地図の表示
     folium_static(m, width=900, height=600)
     
@@ -329,7 +392,8 @@ with col1:
             <li>マウスホイールでズームイン/アウト</li>
             <li>ドラッグで地図を移動</li>
             <li>マーカーやエリアをクリックで詳細情報を表示</li>
-            <li>サイドバーで表示する河川や情報を切り替え</li>
+            <li>サイドバーでデータセットの表示/非表示を切り替え</li>
+            <li>右上のレイヤーコントロールで個別レイヤーの切り替えが可能</li>
         </ul>
     </div>
     """, unsafe_allow_html=True)
@@ -342,51 +406,142 @@ st.subheader("📁 洪水浸水想定区域データの読み込み")
 tab1, tab2 = st.tabs(["📤 データアップロード", "🔄 形式変換ツール"])
 
 with tab1:
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        st.markdown("""
-        国土交通省の**洪水浸水想定区域データ**をアップロードすると、
-        実際のデータに基づいた正確なハザードマップを表示できます。
-        
-        **対応フォーマット:**
-        - GeoJSON (.geojson, .json) ← **推奨**
-        - Shapefile (.zip形式でアップロード)
-        - KML (.kml)
-        
-        **📌 おすすめ**: GeoJSON形式が最も確実に読み込めます。
-        """)
-        
-        uploaded_file = st.file_uploader(
-            "データファイルを選択",
-            type=['geojson', 'json', 'zip', 'kml'],
-            help="国土交通省のデータポータルからダウンロードした洪水浸水想定区域データ",
-            key="main_uploader"
-        )
-        
-        if uploaded_file is not None:
-            try:
-                if uploaded_file.name.endswith('.zip'):
-                    # Shapefileの処理
-                    import tempfile
-                    import zipfile
-                    import os
+    st.markdown("""
+    国土交通省の**洪水浸水想定区域データ**を複数アップロードできます。
+    
+    **対応フォーマット:**
+    - GeoJSON (.geojson, .json) ← **推奨**
+    - Shapefile (.zip形式でアップロード)
+    - KML (.kml)
+    
+    **📌 複数ファイル対応**: 一度に複数のファイルをアップロード可能です
+    """)
+    
+    uploaded_files = st.file_uploader(
+        "データファイルを選択（複数選択可）",
+        type=['geojson', 'json', 'zip', 'kml'],
+        help="国土交通省のデータポータルからダウンロードした洪水浸水想定区域データ",
+        accept_multiple_files=True,
+        key="main_uploader"
+    )
+    
+    if uploaded_files:
+        for uploaded_file in uploaded_files:
+            # ファイル名からデータセット名を生成
+            dataset_name = uploaded_file.name.rsplit('.', 1)[0]
+            
+            # 既に同じ名前のデータセットがあるかチェック
+            existing_names = [d['name'] for d in st.session_state.datasets.values()]
+            if dataset_name in existing_names:
+                st.warning(f"⚠️ '{dataset_name}' は既に読み込まれています。スキップします。")
+                continue
+            
+            with st.spinner(f"'{uploaded_file.name}' を読み込み中..."):
+                try:
+                    if uploaded_file.name.endswith('.zip'):
+                        # Shapefileの処理
+                        import tempfile
+                        import zipfile
+                        import os
+                        
+                        with tempfile.TemporaryDirectory() as tmpdir:
+                            with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
+                                zip_ref.extractall(tmpdir)
+                            
+                            shp_files = []
+                            for root, dirs, files in os.walk(tmpdir):
+                                for file in files:
+                                    if file.endswith('.shp'):
+                                        shp_files.append(os.path.join(root, file))
+                            
+                            if shp_files:
+                                gdf = gpd.read_file(shp_files[0])
+                                
+                                # WGS84に変換
+                                if gdf.crs and gdf.crs.to_epsg() != 4326:
+                                    gdf = gdf.to_crs(epsg=4326)
+                                
+                                dataset_id = add_dataset(
+                                    dataset_name,
+                                    gdf,
+                                    'geodataframe',
+                                    uploaded_file.name
+                                )
+                                st.success(f"✅ '{dataset_name}' を読み込みました（{len(gdf)} 件）")
+                            else:
+                                st.error(f"❌ '{uploaded_file.name}' 内に.shpファイルが見つかりません")
                     
+                    elif uploaded_file.name.endswith('.kml'):
+                        # KMLの処理
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.kml') as tmp_file:
+                            tmp_file.write(uploaded_file.read())
+                            tmp_file_path = tmp_file.name
+                        
+                        gdf = gpd.read_file(tmp_file_path, driver='KML')
+                        os.unlink(tmp_file_path)
+                        
+                        # WGS84に変換
+                        if gdf.crs and gdf.crs.to_epsg() != 4326:
+                            gdf = gdf.to_crs(epsg=4326)
+                        
+                        dataset_id = add_dataset(
+                            dataset_name,
+                            gdf,
+                            'geodataframe',
+                            uploaded_file.name
+                        )
+                        st.success(f"✅ '{dataset_name}' を読み込みました（{len(gdf)} 件）")
+                    
+                    else:
+                        # GeoJSONの処理
+                        file_content = uploaded_file.read()
+                        geojson_data = json.loads(file_content)
+                        
+                        dataset_id = add_dataset(
+                            dataset_name,
+                            geojson_data,
+                            'geojson',
+                            uploaded_file.name
+                        )
+                        
+                        feature_count = len(geojson_data['features']) if 'features' in geojson_data else 0
+                        st.success(f"✅ '{dataset_name}' を読み込みました（{feature_count} 件）")
+                
+                except Exception as e:
+                    st.error(f"❌ '{uploaded_file.name}' の読み込みに失敗: {str(e)}")
+        
+        if st.button("🔄 ページを更新", use_container_width=True):
+            st.rerun()
+
+with tab2:
+    st.markdown("""
+    ## 🔄 GeoJSON変換ツール
+    
+    Shapefile、KML、その他の地理空間データをGeoJSON形式に変換します。
+    """)
+    
+    convert_file = st.file_uploader(
+        "変換したいファイルを選択",
+        type=['zip', 'kml', 'gpx', 'geojson', 'json'],
+        help="Shapefile(ZIP)、KML、GPXなどの地理空間データファイル",
+        key="convert_uploader"
+    )
+    
+    if convert_file is not None:
+        try:
+            import tempfile
+            import zipfile
+            import os
+            
+            gdf = None
+            
+            with st.spinner("変換中..."):
+                if convert_file.name.endswith('.zip'):
                     with tempfile.TemporaryDirectory() as tmpdir:
-                        # ZIPファイルを展開
-                        with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
+                        with zipfile.ZipFile(convert_file, 'r') as zip_ref:
                             zip_ref.extractall(tmpdir)
                         
-                        # ZIPファイルの中身を確認
-                        all_files = []
-                        for root, dirs, files in os.walk(tmpdir):
-                            for file in files:
-                                rel_path = os.path.relpath(os.path.join(root, file), tmpdir)
-                                all_files.append(rel_path)
-                        
-                        st.info(f"📂 ZIPファイル内のファイル一覧:\n" + "\n".join(all_files))
-                        
-                        # .shpファイルを再帰的に探す
                         shp_files = []
                         for root, dirs, files in os.walk(tmpdir):
                             for file in files:
@@ -395,330 +550,50 @@ with tab1:
                         
                         if shp_files:
                             gdf = gpd.read_file(shp_files[0])
-                            st.session_state.uploaded_data = gdf
-                            st.success(f"✅ Shapefileを読み込みました: {len(gdf)} 件のデータ")
-                            
-                            # データのプレビュー
-                            with st.expander("データのプレビュー"):
-                                st.dataframe(gdf.head())
-                                if 'geometry' in gdf.columns:
-                                    st.write("✅ ジオメトリ情報を含んでいます")
-                                    
-                            # GeoJSONダウンロードボタン
-                            geojson_str = gdf.to_json()
-                            st.download_button(
-                                label="📥 GeoJSON形式でダウンロード",
-                                data=geojson_str,
-                                file_name="converted_flood_data.geojson",
-                                mime="application/json"
-                            )
+                            st.success(f"✅ Shapefileを読み込みました")
                         else:
-                            st.error("❌ ZIPファイル内に.shpファイルが見つかりません")
-                            st.warning("💡 下の「形式変換ツール」タブをお試しください")
-                else:
-                    # GeoJSONまたはKMLの処理
-                    file_content = uploaded_file.read()
+                            st.error("❌ ZIPファイル内にShapefileが見つかりません")
+                
+                elif convert_file.name.endswith('.kml'):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.kml') as tmp_file:
+                        tmp_file.write(convert_file.read())
+                        tmp_file_path = tmp_file.name
                     
-                    # KMLファイルの場合
-                    if uploaded_file.name.endswith('.kml'):
-                        import tempfile
-                        with tempfile.NamedTemporaryFile(delete=False, suffix='.kml') as tmp_file:
-                            tmp_file.write(file_content)
-                            tmp_file_path = tmp_file.name
-                        
-                        # KMLをGeoDataFrameとして読み込む
-                        gdf = gpd.read_file(tmp_file_path, driver='KML')
-                        st.session_state.uploaded_data = gdf
-                        st.success(f"✅ KMLファイルを読み込みました: {len(gdf)} 件のデータ")
-                        os.unlink(tmp_file_path)
-                        
-                        # GeoJSONダウンロードボタン
-                        geojson_str = gdf.to_json()
-                        st.download_button(
-                            label="📥 GeoJSON形式でダウンロード",
-                            data=geojson_str,
-                            file_name="converted_flood_data.geojson",
-                            mime="application/json"
-                        )
-                    else:
-                        # GeoJSONの処理
-                        geojson_data = json.loads(file_content)
-                        st.session_state.uploaded_data = geojson_data
-                        st.success(f"✅ GeoJSONファイルを読み込みました")
-                        
-                        # データのプレビュー
-                        if 'features' in geojson_data:
-                            st.info(f"📊 データ数: {len(geojson_data['features'])} 件")
-                            
-                            # 最初のデータをプレビュー
-                            if len(geojson_data['features']) > 0:
-                                with st.expander("データのプレビュー（最初の1件）"):
-                                    st.json(geojson_data['features'][0])
+                    gdf = gpd.read_file(tmp_file_path, driver='KML')
+                    os.unlink(tmp_file_path)
+                    st.success(f"✅ KMLファイルを読み込みました")
             
-            except Exception as e:
-                st.error(f"❌ ファイルの読み込みに失敗しました: {str(e)}")
-                st.info("💡 下の「形式変換ツール」タブで変換を試してみてください")
-
-    with col2:
-        st.markdown("""
-        <div style="background: #f0f9ff; padding: 1rem; border-radius: 8px; border: 2px solid #3b82f6;">
-            <h4>📖 データ取得方法</h4>
-            <ol style="font-size: 0.9rem; margin: 0.5rem 0;">
-                <li>国土交通省の<a href="https://www.mlit.go.jp/" target="_blank">ウェブサイト</a>にアクセス</li>
-                <li>「洪水浸水想定区域データ」を検索</li>
-                <li>日田市または大分県のデータをダウンロード</li>
-                <li>このページにアップロード</li>
-                <li>自動的にGeoJSONに変換</li>
-            </ol>
-        </div>
-        """, unsafe_allow_html=True)
-
-with tab2:
-    st.markdown("""
-    ## 🔄 GeoJSON変換ツール
-    
-    Shapefile、KML、その他の地理空間データをGeoJSON形式に変換します。
-    変換後のファイルは、より軽量で扱いやすくなります。
-    """)
-    
-    col1, col2 = st.columns([3, 2])
-    
-    with col1:
-        st.markdown("### 📤 変換元ファイルをアップロード")
-        
-        convert_file = st.file_uploader(
-            "変換したいファイルを選択",
-            type=['zip', 'kml', 'gpx', 'geojson', 'json'],
-            help="Shapefile(ZIP)、KML、GPXなどの地理空間データファイル",
-            key="convert_uploader"
-        )
-        
-        if convert_file is not None:
-            try:
-                import tempfile
-                import zipfile
-                import os
+            if gdf is not None:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("データ件数", f"{len(gdf)} 件")
+                with col2:
+                    st.metric("カラム数", f"{len(gdf.columns)} 個")
+                with col3:
+                    if gdf.crs:
+                        st.metric("座標系", str(gdf.crs).split(':')[-1])
                 
-                gdf = None
+                # 座標系変換
+                if gdf.crs and gdf.crs.to_epsg() != 4326:
+                    if st.button("🌍 WGS84 (EPSG:4326) に変換"):
+                        gdf = gdf.to_crs(epsg=4326)
+                        st.success("✅ 座標系を変換しました")
                 
-                with st.spinner("変換中..."):
-                    if convert_file.name.endswith('.zip'):
-                        # Shapefile ZIP の処理
-                        with tempfile.TemporaryDirectory() as tmpdir:
-                            with zipfile.ZipFile(convert_file, 'r') as zip_ref:
-                                zip_ref.extractall(tmpdir)
-                            
-                            # .shpファイルを探す
-                            shp_files = []
-                            for root, dirs, files in os.walk(tmpdir):
-                                for file in files:
-                                    if file.endswith('.shp'):
-                                        shp_files.append(os.path.join(root, file))
-                            
-                            if shp_files:
-                                st.info(f"📂 見つかったShapefileファイル: {len(shp_files)}個")
-                                
-                                # 複数のShapefileがある場合は選択させる
-                                if len(shp_files) > 1:
-                                    shp_names = [os.path.basename(f) for f in shp_files]
-                                    selected_shp = st.selectbox("変換するファイルを選択", shp_names)
-                                    selected_shp_path = shp_files[shp_names.index(selected_shp)]
-                                else:
-                                    selected_shp_path = shp_files[0]
-                                
-                                gdf = gpd.read_file(selected_shp_path)
-                                st.success(f"✅ Shapefileを読み込みました")
-                            else:
-                                st.error("❌ ZIPファイル内にShapefileが見つかりません")
-                    
-                    elif convert_file.name.endswith('.kml'):
-                        # KMLの処理
-                        with tempfile.NamedTemporaryFile(delete=False, suffix='.kml') as tmp_file:
-                            tmp_file.write(convert_file.read())
-                            tmp_file_path = tmp_file.name
-                        
-                        gdf = gpd.read_file(tmp_file_path, driver='KML')
-                        os.unlink(tmp_file_path)
-                        st.success(f"✅ KMLファイルを読み込みました")
-                    
-                    elif convert_file.name.endswith('.gpx'):
-                        # GPXの処理
-                        with tempfile.NamedTemporaryFile(delete=False, suffix='.gpx') as tmp_file:
-                            tmp_file.write(convert_file.read())
-                            tmp_file_path = tmp_file.name
-                        
-                        gdf = gpd.read_file(tmp_file_path, driver='GPX')
-                        os.unlink(tmp_file_path)
-                        st.success(f"✅ GPXファイルを読み込みました")
-                    
-                    elif convert_file.name.endswith(('.geojson', '.json')):
-                        # 既にGeoJSONの場合
-                        file_content = convert_file.read()
-                        geojson_data = json.loads(file_content)
-                        gdf = gpd.GeoDataFrame.from_features(geojson_data['features'])
-                        st.info("ℹ️ このファイルは既にGeoJSON形式です")
+                # GeoJSON出力
+                geojson_str = gdf.to_json()
                 
-                if gdf is not None:
-                    # データ情報の表示
-                    st.markdown("---")
-                    st.markdown("### 📊 変換結果")
-                    
-                    col_info1, col_info2, col_info3 = st.columns(3)
-                    with col_info1:
-                        st.metric("データ件数", f"{len(gdf)} 件")
-                    with col_info2:
-                        st.metric("カラム数", f"{len(gdf.columns)} 個")
-                    with col_info3:
-                        if gdf.crs:
-                            st.metric("座標系", str(gdf.crs).split(':')[-1])
-                        else:
-                            st.metric("座標系", "未設定")
-                    
-                    # データプレビュー
-                    with st.expander("📋 データプレビュー（最初の5行）"):
-                        st.dataframe(gdf.head())
-                    
-                    # 座標系の変換オプション
-                    st.markdown("---")
-                    st.markdown("### 🌍 座標系の設定（オプション）")
-                    
-                    transform_crs = st.checkbox(
-                        "座標系を変換する（推奨: WGS84 / EPSG:4326）",
-                        value=True if gdf.crs and gdf.crs.to_epsg() != 4326 else False
-                    )
-                    
-                    if transform_crs:
-                        target_crs = st.selectbox(
-                            "変換先の座標系",
-                            ["EPSG:4326 (WGS84 - GPS標準)", "EPSG:3857 (Web メルカトル)", "EPSG:2451 (JGD2000 / 日本測地系)"],
-                            index=0
-                        )
-                        
-                        target_epsg = int(target_crs.split(':')[1].split(' ')[0])
-                        
-                        if st.button("🔄 座標系を変換"):
-                            gdf = gdf.to_crs(epsg=target_epsg)
-                            st.success(f"✅ {target_crs} に変換しました")
-                    
-                    # GeoJSONに変換
-                    st.markdown("---")
-                    st.markdown("### 💾 GeoJSON形式でダウンロード")
-                    
-                    # ファイル名の設定
-                    default_filename = convert_file.name.rsplit('.', 1)[0] + "_converted.geojson"
-                    output_filename = st.text_input("出力ファイル名", value=default_filename)
-                    
-                    # 美しい整形オプション
-                    pretty_print = st.checkbox("読みやすく整形する（ファイルサイズが大きくなります）", value=False)
-                    
-                    # GeoJSON生成
-                    if pretty_print:
-                        geojson_str = gdf.to_json(indent=2)
-                    else:
-                        geojson_str = gdf.to_json()
-                    
-                    # ファイルサイズ表示
-                    file_size_kb = len(geojson_str.encode('utf-8')) / 1024
-                    st.info(f"📦 ファイルサイズ: {file_size_kb:.2f} KB")
-                    
-                    # ダウンロードボタン
-                    st.download_button(
-                        label="📥 GeoJSONファイルをダウンロード",
-                        data=geojson_str,
-                        file_name=output_filename,
-                        mime="application/json",
-                        use_container_width=True
-                    )
-                    
-                    st.success("✅ 変換完了！上のボタンからダウンロードできます")
-                    
-                    # 地図プレビュー
-                    st.markdown("---")
-                    st.markdown("### 🗺️ データプレビュー（地図）")
-                    
-                    preview_map = folium.Map(
-                        location=[gdf.geometry.centroid.y.mean(), gdf.geometry.centroid.x.mean()],
-                        zoom_start=12
-                    )
-                    
-                    folium.GeoJson(
-                        geojson_str,
-                        style_function=lambda x: {
-                            'fillColor': '#3b82f6',
-                            'color': '#1e40af',
-                            'weight': 2,
-                            'fillOpacity': 0.4
-                        }
-                    ).add_to(preview_map)
-                    
-                    folium_static(preview_map, width=700, height=400)
-                    
-            except Exception as e:
-                st.error(f"❌ 変換に失敗しました: {str(e)}")
-                st.info("💡 ファイル形式が正しいか確認してください")
-    
-    with col2:
-        st.markdown("""
-        <div style="background: #fef3c7; padding: 1rem; border-radius: 8px; border: 2px solid #f59e0b; margin-top: 2rem;">
-            <h4>💡 変換のヒント</h4>
-            <ul style="font-size: 0.85rem; margin: 0.5rem 0;">
-                <li><strong>Shapefile</strong>: .shp, .shx, .dbf, .prjファイルを全てZIPに圧縮してアップロード</li>
-                <li><strong>座標系</strong>: Web地図で使用する場合はEPSG:4326を推奨</li>
-                <li><strong>ファイルサイズ</strong>: 大きなファイルは整形なしで変換すると軽量化できます</li>
-                <li><strong>プレビュー</strong>: 変換後に地図上でデータを確認できます</li>
-            </ul>
-        </div>
+                default_filename = convert_file.name.rsplit('.', 1)[0] + "_converted.geojson"
+                
+                st.download_button(
+                    label="📥 GeoJSONファイルをダウンロード",
+                    data=geojson_str,
+                    file_name=default_filename,
+                    mime="application/json",
+                    use_container_width=True
+                )
         
-        <div style="background: #dbeafe; padding: 1rem; border-radius: 8px; border: 2px solid #3b82f6; margin-top: 1rem;">
-            <h4>🔧 対応形式</h4>
-            <ul style="font-size: 0.85rem; margin: 0.5rem 0;">
-                <li>Shapefile (ZIP)</li>
-                <li>KML</li>
-                <li>GPX</li>
-                <li>GeoJSON</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
-
-# 避難時の注意事項
-st.markdown("---")
-st.subheader("🚨 避難時の注意事項")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.markdown("""
-    <div style="background: #dbeafe; padding: 1.5rem; border-radius: 10px; height: 100%;">
-        <h4>🕐 避難のタイミング</h4>
-        <p style="margin: 0.5rem 0;">避難指示が出たら、速やかに避難を開始してください。</p>
-        <p style="margin: 0.5rem 0;">夜間の避難は危険なため、明るいうちに避難しましょう。</p>
-        <p style="margin: 0.5rem 0; font-weight: bold;">早めの避難が命を守ります。</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col2:
-    st.markdown("""
-    <div style="background: #dcfce7; padding: 1.5rem; border-radius: 10px; height: 100%;">
-        <h4>🎒 持ち物</h4>
-        <ul style="margin: 0.5rem 0; padding-left: 1.5rem;">
-            <li>貴重品</li>
-            <li>常備薬</li>
-            <li>飲料水・食料</li>
-            <li>懐中電灯</li>
-            <li>携帯ラジオ</li>
-            <li>モバイルバッテリー</li>
-        </ul>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col3:
-    st.markdown("""
-    <div style="background: #fef3c7; padding: 1.5rem; border-radius: 10px; height: 100%;">
-        <h4>🗺️ 避難経路</h4>
-        <p style="margin: 0.5rem 0;">浸水想定区域を避け、安全な経路で避難してください。</p>
-        <p style="margin: 0.5rem 0; font-weight: bold; color: #92400e;">⚠️ 冠水している道路は絶対に通行しないでください。</p>
-    </div>
-    """, unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"❌ 変換に失敗しました: {str(e)}")
 
 # フッター
 st.markdown("---")
