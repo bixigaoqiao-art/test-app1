@@ -1,66 +1,93 @@
 import streamlit as st
 import numpy as np
 from PIL import Image
-import cv2
+
+def rgb_to_hsv(rgb):
+    """RGBをHSVに変換"""
+    rgb = rgb.astype(float) / 255.0
+    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    
+    maxc = np.max(rgb, axis=-1)
+    minc = np.min(rgb, axis=-1)
+    v = maxc
+    
+    deltac = maxc - minc
+    s = np.where(maxc != 0, deltac / maxc, 0)
+    
+    rc = np.where(deltac != 0, (maxc - r) / deltac, 0)
+    gc = np.where(deltac != 0, (maxc - g) / deltac, 0)
+    bc = np.where(deltac != 0, (maxc - b) / deltac, 0)
+    
+    h = np.zeros_like(maxc)
+    h = np.where((maxc == r) & (deltac != 0), bc - gc, h)
+    h = np.where((maxc == g) & (deltac != 0), 2.0 + rc - bc, h)
+    h = np.where((maxc == b) & (deltac != 0), 4.0 + gc - rc, h)
+    h = (h / 6.0) % 1.0
+    h = h * 180
+    
+    return np.stack([h, s * 255, v * 255], axis=-1)
 
 def separate_colors(image, target_color):
     """特定の色を強調して分離"""
     img_array = np.array(image)
-    hsv = cv2.cvtColor(img_array, cv2.COLOR_RGB2HSV)
+    hsv = rgb_to_hsv(img_array)
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
     
-    # 色相範囲の定義（HSV空間）
+    # 色相範囲の定義
     color_ranges = {
-        '赤': [(0, 100, 100), (10, 255, 255), (170, 100, 100), (180, 255, 255)],
-        '緑': [(40, 100, 100), (80, 255, 255)],
-        '青': [(100, 100, 100), (130, 255, 255)],
-        '黄': [(20, 100, 100), (40, 255, 255)],
-        '紫': [(130, 100, 100), (160, 255, 255)],
-        'オレンジ': [(10, 100, 100), (20, 255, 255)],
+        '赤': [(0, 10), (170, 180)],
+        '緑': [(40, 80)],
+        '青': [(100, 130)],
+        '黄': [(20, 40)],
+        '紫': [(130, 160)],
+        'オレンジ': [(10, 20)],
     }
     
     # マスクの作成
-    if target_color == '赤':
-        mask1 = cv2.inRange(hsv, color_ranges['赤'][0], color_ranges['赤'][1])
-        mask2 = cv2.inRange(hsv, color_ranges['赤'][2], color_ranges['赤'][3])
-        mask = cv2.bitwise_or(mask1, mask2)
-    else:
-        mask = cv2.inRange(hsv, color_ranges[target_color][0], color_ranges[target_color][1])
+    mask = np.zeros(h.shape, dtype=bool)
+    
+    for h_range in color_ranges[target_color]:
+        h_min, h_max = h_range
+        mask |= ((h >= h_min) & (h <= h_max) & (s >= 100) & (v >= 100))
     
     # 結果画像の作成
     result = img_array.copy()
-    result[mask == 0] = result[mask == 0] // 3  # 対象外の色を暗くする
+    result[~mask] = result[~mask] // 3  # 対象外の色を暗くする
     
     return Image.fromarray(result)
 
 def enhance_contrast(image, target_colors):
     """複数の色のコントラストを強調"""
     img_array = np.array(image)
-    hsv = cv2.cvtColor(img_array, cv2.COLOR_RGB2HSV)
-    
-    color_mappings = {
-        '赤→マゼンタ': [(0, 180, 170, 255), (255, 0, 255)],
-        '緑→シアン': [(40, 80, 100, 255), (0, 255, 255)],
-        '赤→青': [(0, 10, 100, 255), (0, 0, 255), (170, 180, 100, 255)],
-        '緑→黄': [(40, 80, 100, 255), (255, 255, 0)],
-    }
+    hsv = rgb_to_hsv(img_array)
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
     
     result = img_array.copy()
     
     for mapping in target_colors:
-        if mapping in color_mappings:
-            data = color_mappings[mapping]
-            if mapping == '赤→青':
-                # 赤の2つの範囲を処理
-                mask1 = cv2.inRange(hsv, (data[0][0], data[0][2], data[0][3], 0), 
-                                   (data[0][1], 255, 255, 0))
-                mask2 = cv2.inRange(hsv, (data[2][0], data[2][2], data[2][3], 0), 
-                                   (data[2][1], 255, 255, 0))
-                mask = cv2.bitwise_or(mask1, mask2)
-                result[mask > 0] = data[1]
-            else:
-                mask = cv2.inRange(hsv, (data[0][0], data[0][2], data[0][3], 0), 
-                                  (data[0][1], 255, 255, 0))
-                result[mask > 0] = data[1]
+        if mapping == '赤→マゼンタ':
+            # 赤の範囲
+            mask1 = ((h >= 0) & (h <= 10) & (s >= 100) & (v >= 100))
+            mask2 = ((h >= 170) & (h <= 180) & (s >= 100) & (v >= 100))
+            mask = mask1 | mask2
+            result[mask] = [255, 0, 255]  # マゼンタ
+            
+        elif mapping == '緑→シアン':
+            # 緑の範囲
+            mask = ((h >= 40) & (h <= 80) & (s >= 100) & (v >= 100))
+            result[mask] = [0, 255, 255]  # シアン
+            
+        elif mapping == '赤→青':
+            # 赤の範囲
+            mask1 = ((h >= 0) & (h <= 10) & (s >= 100) & (v >= 100))
+            mask2 = ((h >= 170) & (h <= 180) & (s >= 100) & (v >= 100))
+            mask = mask1 | mask2
+            result[mask] = [0, 0, 255]  # 青
+            
+        elif mapping == '緑→黄':
+            # 緑の範囲
+            mask = ((h >= 40) & (h <= 80) & (s >= 100) & (v >= 100))
+            result[mask] = [255, 255, 0]  # 黄色
     
     return Image.fromarray(result)
 
@@ -162,15 +189,18 @@ if uploaded_file:
             st.info(f'{cvd}色覚異常に対応した補正を適用しています')
     
     # ダウンロードボタン
-    if st.button('処理画像をダウンロード'):
-        result.save('processed_image.png')
-        with open('processed_image.png', 'rb') as f:
-            st.download_button(
-                '💾 ダウンロード',
-                f,
-                file_name='processed_image.png',
-                mime='image/png'
-            )
+    if 'result' in locals():
+        from io import BytesIO
+        buf = BytesIO()
+        result.save(buf, format='PNG')
+        byte_im = buf.getvalue()
+        
+        st.download_button(
+            '💾 処理画像をダウンロード',
+            byte_im,
+            file_name='processed_image.png',
+            mime='image/png'
+        )
 
 else:
     st.info('👆 画像をアップロードしてください')
