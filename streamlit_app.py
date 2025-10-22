@@ -1,12 +1,92 @@
 import streamlit as st
 import numpy as np
-from PIL import Image
-import cv2
+from PIL import Image, ImageEnhance, ImageDraw
+import colorsys
 
 st.set_page_config(page_title="色覚サポートアプリ", layout="wide")
 
 st.title("🎨 色覚サポートアプリケーション")
 st.markdown("色覚異常の方でも色の違いを認識しやすくするために、色を分離・強調表示します")
+
+def rgb_to_hsv(rgb):
+    """RGB (0-255) を HSV (H:0-360, S:0-100, V:0-100) に変換"""
+    r, g, b = rgb[0]/255.0, rgb[1]/255.0, rgb[2]/255.0
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+    return h * 360, s * 100, v * 100
+
+def hsv_to_rgb(hsv):
+    """HSV (H:0-360, S:0-100, V:0-100) を RGB (0-255) に変換"""
+    h, s, v = hsv[0]/360.0, hsv[1]/100.0, hsv[2]/100.0
+    r, g, b = colorsys.hsv_to_rgb(h, s, v)
+    return int(r * 255), int(g * 255), int(b * 255)
+
+def is_in_color_range(h, s, v, color_name):
+    """指定した色の範囲内かチェック"""
+    color_ranges = {
+        "赤色系": [(h >= 0 and h <= 10 and s >= 40 and v >= 40) or 
+                  (h >= 340 and h <= 360 and s >= 40 and v >= 40)],
+        "緑色系": [h >= 80 and h <= 150 and s >= 20 and v >= 20],
+        "青色系": [h >= 200 and h <= 260 and s >= 40 and v >= 40],
+        "黄色系": [h >= 45 and h <= 65 and s >= 40 and v >= 40],
+        "オレンジ色系": [h >= 10 and h <= 35 and s >= 40 and v >= 40],
+        "紫色系": [h >= 270 and h <= 320 and s >= 20 and v >= 20]
+    }
+    return any(color_ranges.get(color_name, [False]))
+
+def process_image(img_array, color_mode, enhancement, show_pattern):
+    """画像処理のメイン関数"""
+    height, width = img_array.shape[:2]
+    result = img_array.copy()
+    
+    if color_mode == "全色分離":
+        # 全色を異なる色で表示
+        overlay = np.zeros_like(img_array)
+        
+        colors_to_detect = {
+            "赤色系": (255, 50, 50),
+            "緑色系": (50, 255, 50),
+            "青色系": (50, 150, 255),
+            "黄色系": (255, 255, 50)
+        }
+        
+        for y in range(height):
+            for x in range(width):
+                r, g, b = img_array[y, x]
+                h, s, v = rgb_to_hsv((r, g, b))
+                
+                for color_name, display_color in colors_to_detect.items():
+                    if is_in_color_range(h, s, v, color_name):
+                        overlay[y, x] = display_color
+                        break
+        
+        # 元画像とブレンド
+        alpha = 0.5
+        result = (img_array * (1 - alpha) + overlay * alpha).astype(np.uint8)
+        
+    else:
+        # 特定の色を強調
+        mask = np.zeros((height, width), dtype=bool)
+        
+        for y in range(height):
+            for x in range(width):
+                r, g, b = img_array[y, x]
+                h, s, v = rgb_to_hsv((r, g, b))
+                
+                if is_in_color_range(h, s, v, color_mode):
+                    mask[y, x] = True
+        
+        # 強調処理
+        enhanced = np.clip(img_array.astype(float) * enhancement, 0, 255).astype(np.uint8)
+        result = np.where(mask[:, :, np.newaxis], enhanced, img_array)
+        
+        # パターンオーバーレイ
+        if show_pattern:
+            for y in range(0, height, 10):
+                for x in range(width):
+                    if mask[y, x]:
+                        result[y, x] = (result[y, x] * 0.7 + 255 * 0.3).astype(np.uint8)
+    
+    return result
 
 # サイドバーで設定
 st.sidebar.header("設定")
@@ -16,33 +96,25 @@ uploaded_file = st.file_uploader("画像をアップロードしてください"
 if uploaded_file is not None:
     # 画像を読み込み
     image = Image.open(uploaded_file)
+    
+    # サイズが大きすぎる場合はリサイズ
+    max_size = 800
+    if max(image.size) > max_size:
+        ratio = max_size / max(image.size)
+        new_size = tuple(int(dim * ratio) for dim in image.size)
+        image = image.resize(new_size, Image.Resampling.LANCZOS)
+    
+    # RGB配列に変換
+    if image.mode != 'RGB':
+        image = image.convert('RGB')
+    
     img_array = np.array(image)
-    
-    # RGBからBGRに変換（OpenCV用）
-    if len(img_array.shape) == 3 and img_array.shape[2] == 3:
-        img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-    else:
-        st.error("RGB画像をアップロードしてください")
-        st.stop()
-    
-    # HSV色空間に変換
-    img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     
     st.sidebar.subheader("色の選択")
     color_mode = st.sidebar.selectbox(
         "強調する色",
         ["赤色系", "緑色系", "青色系", "黄色系", "オレンジ色系", "紫色系", "全色分離"]
     )
-    
-    # 色範囲の定義（HSV）
-    color_ranges = {
-        "赤色系": [(0, 100, 100), (10, 255, 255), (170, 100, 100), (180, 255, 255)],
-        "緑色系": [(40, 40, 40), (80, 255, 255)],
-        "青色系": [(100, 100, 100), (130, 255, 255)],
-        "黄色系": [(20, 100, 100), (30, 255, 255)],
-        "オレンジ色系": [(10, 100, 100), (20, 255, 255)],
-        "紫色系": [(130, 50, 50), (160, 255, 255)]
-    }
     
     # 強調度の調整
     enhancement = st.sidebar.slider("強調度", 1.0, 3.0, 1.5, 0.1)
@@ -59,72 +131,11 @@ if uploaded_file is not None:
     with col2:
         st.subheader("処理後画像")
         
-        if color_mode == "全色分離":
-            # 全色を分離して表示
-            result = np.zeros_like(img_array)
-            
-            colors_to_show = ["赤色系", "緑色系", "青色系", "黄色系"]
-            display_colors = [
-                (255, 0, 0),      # 赤
-                (0, 255, 0),      # 緑
-                (0, 0, 255),      # 青
-                (255, 255, 0)     # 黄
-            ]
-            
-            for color_name, display_color in zip(colors_to_show, display_colors):
-                ranges = color_ranges[color_name]
-                mask = np.zeros(img_hsv[:, :, 0].shape, dtype=np.uint8)
-                
-                if len(ranges) == 4:  # 赤色（2つの範囲）
-                    mask1 = cv2.inRange(img_hsv, np.array(ranges[0]), np.array(ranges[1]))
-                    mask2 = cv2.inRange(img_hsv, np.array(ranges[2]), np.array(ranges[3]))
-                    mask = cv2.bitwise_or(mask1, mask2)
-                else:
-                    mask = cv2.inRange(img_hsv, np.array(ranges[0]), np.array(ranges[1]))
-                
-                # マスクを適用して色を割り当て
-                for i in range(3):
-                    result[:, :, i] = np.where(mask > 0, 
-                                               display_color[i], 
-                                               result[:, :, i])
-            
-            # 元画像とブレンド
-            alpha = 0.6
-            result = cv2.addWeighted(img_array, 1-alpha, result, alpha, 0)
-            
-        else:
-            # 特定の色を強調
-            ranges = color_ranges[color_mode]
-            mask = np.zeros(img_hsv[:, :, 0].shape, dtype=np.uint8)
-            
-            if len(ranges) == 4:  # 赤色の場合
-                mask1 = cv2.inRange(img_hsv, np.array(ranges[0]), np.array(ranges[1]))
-                mask2 = cv2.inRange(img_hsv, np.array(ranges[2]), np.array(ranges[3]))
-                mask = cv2.bitwise_or(mask1, mask2)
-            else:
-                mask = cv2.inRange(img_hsv, np.array(ranges[0]), np.array(ranges[1]))
-            
-            # マスクを3チャンネルに拡張
-            mask_3ch = cv2.merge([mask, mask, mask])
-            
-            # 強調処理
-            highlighted = img_array.copy().astype(float)
-            highlighted = highlighted * enhancement
-            highlighted = np.clip(highlighted, 0, 255).astype(np.uint8)
-            
-            # マスク部分だけ強調
-            result = np.where(mask_3ch > 0, highlighted, img_array)
-            
-            # パターンオーバーレイ
-            if show_pattern:
-                pattern = np.zeros_like(mask)
-                pattern[::10, :] = 255  # 横線パターン
-                pattern_3ch = cv2.merge([pattern, pattern, pattern])
-                result = np.where((mask_3ch > 0) & (pattern_3ch > 0), 
-                                 (result * 0.7 + 255 * 0.3).astype(np.uint8), 
-                                 result)
+        with st.spinner('処理中...'):
+            result = process_image(img_array, color_mode, enhancement, show_pattern)
+            result_image = Image.fromarray(result)
         
-        st.image(result, use_container_width=True)
+        st.image(result_image, use_container_width=True)
     
     # 色の説明
     st.markdown("---")
@@ -138,6 +149,17 @@ if uploaded_file is not None:
     
     **ヒント**: 赤と緑の区別が難しい場合は「全色分離」モードが効果的です。
     """)
+    
+    # ダウンロードボタン
+    from io import BytesIO
+    buf = BytesIO()
+    result_image.save(buf, format='PNG')
+    st.download_button(
+        label="処理後画像をダウンロード",
+        data=buf.getvalue(),
+        file_name="color_enhanced.png",
+        mime="image/png"
+    )
 
 else:
     st.info("👆 画像をアップロードして開始してください")
